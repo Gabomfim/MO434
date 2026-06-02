@@ -216,3 +216,54 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Machine Learning / Deep Learning
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pb
+*.onnx
+checkpoints/
+models/checkpoints/
+saved_models/
+runs/
+logs/
+tensorboard/
+
+# Jupyter Notebook outputs (keep notebooks in version control)
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Experiment outputs and results
+outputs/
+results/
+experiments/
+
+# Large data files
+*.csv
+*.json
+*.npy
+*.npz
+data/
+datasets/
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE local settings (but keep .vscode/settings.json)
+.vscode/.history/
+.vscode/.DS_Store
+
+# Conda environment lock files (uv.lock is tracked for reproducibility)
+conda-lock.yml
+conda-env-lock.yml
+
+# OS-specific
+Thumbs.db
+
+# Local experiment tooling artifacts
+wandb/
+.git_broken_backup_*/
