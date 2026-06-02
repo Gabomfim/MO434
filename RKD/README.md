@@ -29,6 +29,7 @@ python run_distill.py --dataset cub200 \
                       --base resnet18 \
                       --teacher_base resnet50 \
                       --teacher_load teacher/best.pth \
+                      --quad_ratio 1 \
                       --save_dir student \
                       --wandb_project rkd-metric-learning \
                       --wandb_run_name distill-resnet18 \
@@ -110,12 +111,138 @@ Both `run.py` and `run_distill.py` support:
 * `--wandb_run_name`: Explicit run name (optional).
 * `--wandb_mode`: `online`, `offline`, or `disabled`.
 
+Distillation-specific extra loss weight:
+
+* `--quad_ratio`: weight for 4-sample-set relational distance-sum matching loss.
+
 When enabled, scripts log:
 
 * Hyperparameters/config values.
 * Epoch metrics (loss, recall, learning rate, and distillation loss components).
 * Dataset metadata artifact.
 * Model checkpoint artifacts (`best`, `last`) when `--save_dir` is set.
+
+## W&B Report Template (Distillation Comparison)
+
+Use this template to compare multiple distillation runs in a single report.
+
+### 1) Organize Runs for Comparison
+
+Use a common project and group for related runs.
+
+```bash
+python run_distill.py ... \
+  --wandb_project rkd-metric-learning \
+  --wandb_group distillation-experiments \
+  --wandb_run_name distill-r18-a2-d1-q0
+```
+
+Recommended naming pattern:
+
+* `distill-<student>-a<angle_ratio>-d<dist_ratio>-q<quad_ratio>-dark<dark_ratio>-seed<seed>`
+
+### 2) Create Panels in a W&B Report
+
+Add a run set filter:
+
+* `group = distillation-experiments`
+
+Add these line charts (x-axis = `epoch`):
+
+* `eval/test_recall1`, `eval/test_recall2`, `eval/test_recall4`, `eval/test_recall8`
+* `eval/train_recall1`, `eval/train_recall2`, `eval/train_recall4`, `eval/train_recall8`
+* `train/loss`
+* `train/dist_loss`, `train/angle_loss`, `train/quad_loss`, `train/dark_loss`, `train/triplet_loss`, `train/at_loss`
+* `lr`
+
+Add summary panels:
+
+* `best_test_recall_primary`
+* `final_test_recall_primary`
+* `best_test_recall1`, `best_test_recall2`, `best_test_recall4`, `best_test_recall8`
+
+Add comparison tables:
+
+* Run table with columns: `name`, `group`, `config.dist_ratio`, `config.angle_ratio`, `config.quad_ratio`, `config.dark_ratio`, `summary.best_test_recall_primary`, `summary.final_test_recall_primary`.
+* Artifact table for `metrics` artifacts (`distill-metrics-<run_id>`) to download and compare CSV histories.
+
+### 3) Use Logged Artifacts
+
+Each distillation run logs:
+
+* `metrics/epoch_table` (in-run table with per-epoch metrics).
+* `distill_epoch_metrics.csv` as a W&B `metrics` artifact.
+* `best` and `last` model artifacts.
+* Confusion matrix plots (`eval/test/confusion_matrix`, `best/test/confusion_matrix`) when class/sample limits allow.
+
+### 4) Suggested Comparison Workflow
+
+1. Run a baseline (`quad_ratio=0`) and at least one variant (`quad_ratio>0`).
+2. Keep all other hyperparameters fixed except the one being tested.
+3. Compare `best_test_recall_primary` first, then inspect loss-component curves.
+4. Use confusion matrices to diagnose class-level behavior changes.
+5. Export `distill_epoch_metrics.csv` artifacts for external analysis if needed.
+
+## W&B Report Template (Teacher Comparison)
+
+Use this template to compare teacher-only runs (backbone, loss, sampling, and margin choices).
+
+### 1) Organize Runs
+
+Use a dedicated group for teacher experiments:
+
+```bash
+python run.py --mode train ... \
+  --wandb_project rkd-metric-learning \
+  --wandb_group teacher-runs \
+  --wandb_run_name teacher-r50-distance-l2triplet
+```
+
+Recommended naming pattern:
+
+* `teacher-<backbone>-<sample>-<loss>-m<margin>-seed<seed>`
+
+### 2) Create Panels in W&B
+
+Add a run set filter:
+
+* `group = teacher-runs`
+
+Add these line charts (x-axis = `epoch`):
+
+* `train/loss`
+* `eval/train_recall@1`, `eval/train_recall@2`, `eval/train_recall@4`, `eval/train_recall@8`
+* `eval/test_recall@1`, `eval/test_recall@2`, `eval/test_recall@4`, `eval/test_recall@8`
+* `best_recall@1`
+* `lr`
+
+Add summary panels:
+
+* `best_recall@1`
+* `final_recall@1`
+* `final_recall@2`, `final_recall@4`, `final_recall@8` (if logged via `--recall`)
+
+Add comparison tables:
+
+* Run table with columns: `name`, `config.base`, `config.sample`, `config.loss`, `config.margin`, `summary.best_recall@1`, `summary.final_recall@1`.
+* Artifact table for teacher metric artifacts (`teacher-history-<base>-<seed>`).
+
+### 3) Use Teacher Artifacts
+
+Each teacher run logs:
+
+* `artifacts/epoch_history_table`.
+* `teacher_epoch_history.csv` as a W&B `metrics` artifact.
+* `best` and `last` model artifacts.
+* Final/eval confusion matrix when class count is within limits.
+
+### 4) Suggested Teacher Workflow
+
+1. Choose one baseline backbone and loss/sampler setup.
+2. Change one factor at a time (for example, sampler or margin).
+3. Compare `best_recall@1` first, then inspect recall curves and training loss.
+4. Use confusion matrix differences to inspect class-level retrieval behavior.
+5. Keep top teacher checkpoint as the fixed teacher for distillation sweeps.
 
 
 ##  Dependency

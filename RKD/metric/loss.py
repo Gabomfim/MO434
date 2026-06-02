@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from metric.utils import pdist
 
-__all__ = ['L1Triplet', 'L2Triplet', 'ContrastiveLoss', 'RkdDistance', 'RKdAngle', 'HardDarkRank']
+__all__ = ['L1Triplet', 'L2Triplet', 'ContrastiveLoss', 'RkdDistance', 'RKdAngle', 'HardDarkRank',
+           'RkdQuadrupletSum']
 
 
 class _Triplet(nn.Module):
@@ -145,4 +146,49 @@ class RkdDistance(nn.Module):
         d = d / mean_d
 
         loss = F.smooth_l1_loss(d, t_d, reduction='elementwise_mean')
+        return loss
+
+
+class RkdQuadrupletSum(nn.Module):
+    """
+    Relational KD loss on all 4-sample sets in a minibatch.
+
+    For each unordered set {A, B, C, D}, compute the sum of all 6 pairwise
+    Euclidean distances in embedding space. Then normalize teacher and student
+    set-wise sums by each network's mean (like RKD distance normalization) and
+    minimize the smooth L1 difference.
+    """
+
+    def forward(self, student, teacher):
+        n = student.size(0)
+        if n < 4:
+            return student.new_tensor(0.)
+
+        comb = torch.combinations(torch.arange(n, device=student.device), r=4)
+        tri_u = torch.triu_indices(4, 4, offset=1, device=student.device)
+
+        def set_distance_sums(emb):
+            # [num_sets, 4, dim]
+            quad = emb[comb]
+            # [num_sets, 4, 4, dim]
+            diff = quad.unsqueeze(2) - quad.unsqueeze(1)
+            # [num_sets, 4, 4]
+            d = diff.norm(p=2, dim=-1)
+            # Sum the 6 unordered pair distances per set.
+            return d[:, tri_u[0], tri_u[1]].sum(dim=1)
+
+        with torch.no_grad():
+            t_sum = set_distance_sums(teacher)
+            t_den = t_sum[t_sum > 0].mean()
+            if torch.isnan(t_den) or t_den <= 0:
+                t_den = t_sum.new_tensor(1.0)
+            t_sum = t_sum / t_den
+
+        s_sum = set_distance_sums(student)
+        s_den = s_sum[s_sum > 0].mean()
+        if torch.isnan(s_den) or s_den <= 0:
+            s_den = s_sum.new_tensor(1.0)
+        s_sum = s_sum / s_den
+
+        loss = F.smooth_l1_loss(s_sum, t_sum, reduction='elementwise_mean')
         return loss

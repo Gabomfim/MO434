@@ -1,6 +1,7 @@
 import os
 import argparse
 import socket
+import csv
 
 import dataset
 import model.backbone as backbone
@@ -14,9 +15,9 @@ import wandb
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-from metric.utils import recall
+from metric.utils import recall, pdist
 from metric.batchsampler import NPairs
-from metric.loss import HardDarkRank, RkdDistance, RKdAngle, L2Triplet, AttentionTransfer
+from metric.loss import HardDarkRank, RkdDistance, RKdAngle, L2Triplet, AttentionTransfer, RkdQuadrupletSum
 from model.embedding import LinearEmbedding
 
 
@@ -49,6 +50,7 @@ parser.add_argument('--teacher_base',
 parser.add_argument('--triplet_ratio', default=0, type=float)
 parser.add_argument('--dist_ratio', default=0, type=float)
 parser.add_argument('--angle_ratio', default=0, type=float)
+parser.add_argument('--quad_ratio', default=0, type=float)
 
 parser.add_argument('--dark_ratio', default=0, type=float)
 parser.add_argument('--dark_alpha', default=2, type=float)
@@ -82,11 +84,17 @@ parser.add_argument('--lr_decay_epochs', type=int, default=[40, 60], nargs='+')
 parser.add_argument('--lr_decay_gamma', type=float, default=0.1)
 parser.add_argument('--save_dir', default=None)
 parser.add_argument('--load', default=None)
+parser.add_argument('--recall', default=[1, 2, 4, 8], type=int, nargs='+')
+
+parser.add_argument('--log_confusion_matrix', choices=['true', 'false'], default='true')
+parser.add_argument('--max_confusion_classes', type=int, default=200)
+parser.add_argument('--max_confusion_samples', type=int, default=2000)
 
 parser.add_argument('--wandb_project', default='rkd-metric-learning')
 parser.add_argument('--wandb_entity', default=None)
 parser.add_argument('--wandb_run_name', default=None)
 parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online')
+parser.add_argument('--wandb_group', default='distillation-experiments')
 
 opts = parser.parse_args()
 student_base = opts.base(pretrained=True)
@@ -146,6 +154,7 @@ run = wandb.init(
     entity=opts.wandb_entity,
     name=opts.wandb_run_name,
     mode=opts.wandb_mode,
+    group=opts.wandb_group,
     config={
         'dataset': _name(opts.dataset),
         'base': _name(opts.base),
@@ -153,6 +162,7 @@ run = wandb.init(
         'triplet_ratio': opts.triplet_ratio,
         'dist_ratio': opts.dist_ratio,
         'angle_ratio': opts.angle_ratio,
+        'quad_ratio': opts.quad_ratio,
         'dark_ratio': opts.dark_ratio,
         'dark_alpha': opts.dark_alpha,
         'dark_beta': opts.dark_beta,
@@ -171,8 +181,13 @@ run = wandb.init(
         'iter_per_epoch': opts.iter_per_epoch,
         'lr_decay_epochs': opts.lr_decay_epochs,
         'lr_decay_gamma': opts.lr_decay_gamma,
+        'recall': opts.recall,
+        'log_confusion_matrix': opts.log_confusion_matrix,
+        'max_confusion_classes': opts.max_confusion_classes,
+        'max_confusion_samples': opts.max_confusion_samples,
         'save_dir': opts.save_dir,
         'load': opts.load,
+        'wandb_group': opts.wandb_group,
     },
     tags=['rkd', 'metric-learning', 'distillation', 'run_distill.py'],
 )
@@ -227,6 +242,99 @@ angle_criterion = RKdAngle()
 dark_criterion = HardDarkRank(alpha=opts.dark_alpha, beta=opts.dark_beta)
 triplet_criterion = L2Triplet(sampler=opts.triplet_sample(), margin=opts.triplet_margin)
 at_criterion = AttentionTransfer()
+quad_criterion = RkdQuadrupletSum()
+primary_recall_k = opts.recall[0]
+
+history_columns = [
+    'epoch',
+    'train_loss',
+    'train_triplet_loss',
+    'train_dist_loss',
+    'train_angle_loss',
+    'train_quad_loss',
+    'train_dark_loss',
+    'train_at_loss',
+    'lr',
+]
+for k in opts.recall:
+    history_columns.extend([
+        'train_recall%d' % k,
+        'test_recall%d' % k,
+        'best_train_recall%d' % k,
+        'best_test_recall%d' % k,
+    ])
+history_table = wandb.Table(columns=history_columns)
+
+
+def _recall_log_dict(prefix, rec_values):
+    out = {}
+    for k, r in zip(opts.recall, rec_values):
+        out['%s_recall%d' % (prefix, k)] = r
+    return out
+
+
+def _append_history_row(epoch, train_stats, train_rec, test_rec, best_train_rec, best_test_rec, lr):
+    row = [
+        epoch,
+        train_stats['loss'] if train_stats is not None else None,
+        train_stats['triplet'] if train_stats is not None else None,
+        train_stats['dist'] if train_stats is not None else None,
+        train_stats['angle'] if train_stats is not None else None,
+        train_stats['quad'] if train_stats is not None else None,
+        train_stats['dark'] if train_stats is not None else None,
+        train_stats['at'] if train_stats is not None else None,
+        lr,
+    ]
+    for i, _ in enumerate(opts.recall):
+        row.extend([
+            train_rec[i],
+            test_rec[i],
+            best_train_rec[i],
+            best_test_rec[i],
+        ])
+    history_table.add_data(*row)
+
+
+def _log_confusion_matrix(prefix, embeddings, labels, step):
+    if opts.log_confusion_matrix == 'false':
+        return
+
+    if embeddings.size(0) < 2:
+        return
+
+    if embeddings.size(0) > opts.max_confusion_samples:
+        idx = torch.randperm(embeddings.size(0))[:opts.max_confusion_samples]
+        embeddings = embeddings[idx]
+        labels = labels[idx]
+
+    d = pdist(embeddings, squared=True)
+    d.fill_diagonal_(float('inf'))
+    nn_idx = d.argmin(dim=1)
+
+    y_true_raw = labels.tolist()
+    y_pred_raw = labels[nn_idx].tolist()
+
+    classes = sorted(set(y_true_raw) | set(y_pred_raw))
+    if len(classes) > opts.max_confusion_classes:
+        run.log({
+            '%s/confusion_matrix_skipped' % prefix: 1,
+            '%s/confusion_num_classes' % prefix: len(classes),
+        }, step=step)
+        return
+
+    class_to_idx = {c: i for i, c in enumerate(classes)}
+    y_true = [class_to_idx[c] for c in y_true_raw]
+    y_pred = [class_to_idx[c] for c in y_pred_raw]
+    class_names = [str(c) for c in classes]
+
+    run.log({
+        '%s/confusion_matrix' % prefix: wandb.plot.confusion_matrix(
+            probs=None,
+            y_true=y_true,
+            preds=y_pred,
+            class_names=class_names,
+        )
+    }, step=step)
 
 
 def train(loader, ep):
@@ -237,6 +345,7 @@ def train(loader, ep):
     dist_loss_all = []
     angle_loss_all = []
     dark_loss_all = []
+    quad_loss_all = []
     triplet_loss_all = []
     at_loss_all = []
     loss_all = []
@@ -259,9 +368,10 @@ def train(loader, ep):
         triplet_loss = opts.triplet_ratio * triplet_criterion(e, labels)
         dist_loss = opts.dist_ratio * dist_criterion(e, t_e)
         angle_loss = opts.angle_ratio * angle_criterion(e, t_e)
+        quad_loss = opts.quad_ratio * quad_criterion(e, t_e)
         dark_loss = opts.dark_ratio * dark_criterion(e, t_e)
 
-        loss = triplet_loss + dist_loss + angle_loss + dark_loss + at_loss
+        loss = triplet_loss + dist_loss + angle_loss + quad_loss + dark_loss + at_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -270,34 +380,37 @@ def train(loader, ep):
         triplet_loss_all.append(triplet_loss.item())
         dist_loss_all.append(dist_loss.item())
         angle_loss_all.append(angle_loss.item())
+        quad_loss_all.append(quad_loss.item())
         dark_loss_all.append(dark_loss.item())
         at_loss_all.append(at_loss.item())
         loss_all.append(loss.item())
 
-        train_iter.set_description("[Train][Epoch %d] Triplet: %.5f, Dist: %.5f, Angle: %.5f, Dark: %5f, At: %5f" %
-                                   (ep, triplet_loss.item(), dist_loss.item(), angle_loss.item(), dark_loss.item(), at_loss.item()))
+        train_iter.set_description("[Train][Epoch %d] Triplet: %.5f, Dist: %.5f, Angle: %.5f, Quad: %.5f, Dark: %5f, At: %5f" %
+                       (ep, triplet_loss.item(), dist_loss.item(), angle_loss.item(), quad_loss.item(), dark_loss.item(), at_loss.item()))
     loss_mean = torch.Tensor(loss_all).mean().item()
     triplet_mean = torch.Tensor(triplet_loss_all).mean().item()
     dist_mean = torch.Tensor(dist_loss_all).mean().item()
     angle_mean = torch.Tensor(angle_loss_all).mean().item()
+    quad_mean = torch.Tensor(quad_loss_all).mean().item()
     dark_mean = torch.Tensor(dark_loss_all).mean().item()
     at_mean = torch.Tensor(at_loss_all).mean().item()
 
-    print('[Epoch %d] Loss: %.5f, Triplet: %.5f, Dist: %.5f, Angle: %.5f, Dark: %.5f At: %.5f\n' %\
-          (ep, loss_mean, triplet_mean, dist_mean, angle_mean, dark_mean, at_mean))
+    print('[Epoch %d] Loss: %.5f, Triplet: %.5f, Dist: %.5f, Angle: %.5f, Quad: %.5f, Dark: %.5f At: %.5f\n' %\
+          (ep, loss_mean, triplet_mean, dist_mean, angle_mean, quad_mean, dark_mean, at_mean))
 
     return {
         'loss': loss_mean,
         'triplet': triplet_mean,
         'dist': dist_mean,
         'angle': angle_mean,
+        'quad': quad_mean,
         'dark': dark_mean,
         'at': at_mean,
     }
 
 
-def eval(net, normalize, loader, ep):
-    K = [1]
+def eval(net, normalize, loader, ep, return_embeddings=False):
+    K = opts.recall
     net.eval()
     test_iter = tqdm(loader)
     embeddings_all, labels_all = [], []
@@ -316,26 +429,42 @@ def eval(net, normalize, loader, ep):
 
         for k, r in zip(K, rec):
             print('[Epoch %d] Recall@%d: [%.4f]\n' % (ep, k, 100 * r))
-    return rec[0]
+
+    if return_embeddings:
+        return rec, embeddings_all, labels_all
+    return rec
 
 
-eval(teacher, teacher_normalize, loader_train_eval, 0)
-eval(teacher, teacher_normalize, loader_eval, 0)
+teacher_train_rec = eval(teacher, teacher_normalize, loader_train_eval, 0)
+teacher_val_rec = eval(teacher, teacher_normalize, loader_eval, 0)
 best_train_rec = eval(student, student_normalize, loader_train_eval, 0)
-best_val_rec = eval(student, student_normalize, loader_eval, 0)
+best_val_rec, best_val_embeddings, best_val_labels = eval(student, student_normalize, loader_eval, 0, return_embeddings=True)
 
 run.log({
     'epoch': 0,
-    'eval/train_recall1': best_train_rec,
-    'eval/test_recall1': best_val_rec,
-    'best_train_recall1': best_train_rec,
-    'best_test_recall1': best_val_rec,
+    **_recall_log_dict('teacher/train', teacher_train_rec),
+    **_recall_log_dict('teacher/test', teacher_val_rec),
+    **_recall_log_dict('eval/train', best_train_rec),
+    **_recall_log_dict('eval/test', best_val_rec),
+    **_recall_log_dict('best/train', best_train_rec),
+    **_recall_log_dict('best/test', best_val_rec),
 }, step=0)
+
+_append_history_row(
+    epoch=0,
+    train_stats=None,
+    train_rec=best_train_rec,
+    test_rec=best_val_rec,
+    best_train_rec=best_train_rec,
+    best_test_rec=best_val_rec,
+    lr=optimizer.param_groups[0]['lr'],
+)
+_log_confusion_matrix('eval/test', best_val_embeddings, best_val_labels, step=0)
 
 for epoch in range(1, opts.epochs+1):
     train_stats = train(loader_train_sample, epoch)
     train_recall = eval(student, student_normalize, loader_train_eval, epoch)
-    val_recall = eval(student, student_normalize, loader_eval, epoch)
+    val_recall, val_embeddings, val_labels = eval(student, student_normalize, loader_eval, epoch, return_embeddings=True)
 
     run.log({
         'epoch': epoch,
@@ -343,20 +472,24 @@ for epoch in range(1, opts.epochs+1):
         'train/triplet_loss': train_stats['triplet'],
         'train/dist_loss': train_stats['dist'],
         'train/angle_loss': train_stats['angle'],
+        'train/quad_loss': train_stats['quad'],
         'train/dark_loss': train_stats['dark'],
         'train/at_loss': train_stats['at'],
-        'eval/train_recall1': train_recall,
-        'eval/test_recall1': val_recall,
-        'best_train_recall1': best_train_rec,
-        'best_test_recall1': best_val_rec,
+        **_recall_log_dict('eval/train', train_recall),
+        **_recall_log_dict('eval/test', val_recall),
+        **_recall_log_dict('best/train', best_train_rec),
+        **_recall_log_dict('best/test', best_val_rec),
         'lr': optimizer.param_groups[0]['lr'],
     }, step=epoch)
 
-    if best_train_rec < train_recall:
-        best_train_rec = train_recall
+    for i, _ in enumerate(opts.recall):
+        if best_train_rec[i] < train_recall[i]:
+            best_train_rec[i] = train_recall[i]
 
-    if best_val_rec < val_recall:
-        best_val_rec = val_recall
+    if best_val_rec[0] < val_recall[0]:
+        best_val_rec = list(val_recall)
+        best_val_embeddings = val_embeddings
+        best_val_labels = val_labels
         if opts.save_dir is not None:
             if not os.path.isdir(opts.save_dir):
                 os.mkdir(opts.save_dir)
@@ -365,10 +498,25 @@ for epoch in range(1, opts.epochs+1):
             best_artifact = wandb.Artifact(
                 name='distill-model-best-%s' % _name(opts.base).lower(),
                 type='model',
-                metadata={'epoch': epoch, 'best_test_recall1': best_val_rec},
+                metadata={
+                    'epoch': epoch,
+                    'best_test_recall_primary': best_val_rec[0],
+                    'best_test_recall_k': opts.recall,
+                    'best_test_recall_values': best_val_rec,
+                },
             )
             best_artifact.add_file(best_path)
             run.log_artifact(best_artifact, aliases=['best'])
+
+    _append_history_row(
+        epoch=epoch,
+        train_stats=train_stats,
+        train_rec=train_recall,
+        test_rec=val_recall,
+        best_train_rec=best_train_rec,
+        best_test_rec=best_val_rec,
+        lr=optimizer.param_groups[0]['lr'],
+    )
 
     if opts.save_dir is not None:
         if not os.path.isdir(opts.save_dir):
@@ -378,19 +526,56 @@ for epoch in range(1, opts.epochs+1):
         last_artifact = wandb.Artifact(
             name='distill-model-last-%s' % _name(opts.base).lower(),
             type='model',
-            metadata={'epoch': epoch, 'final_test_recall1': val_recall},
+            metadata={
+                'epoch': epoch,
+                'final_test_recall_primary': val_recall[0],
+                'final_test_recall_k': opts.recall,
+                'final_test_recall_values': val_recall,
+            },
         )
         last_artifact.add_file(last_path)
         run.log_artifact(last_artifact, aliases=['last'])
         with open("%s/result.txt" % opts.save_dir, 'w') as f:
-            f.write('Best Train Recall@1: %.4f\n' % (best_train_rec * 100))
-            f.write("Best Test Recall@1: %.4f\n" % (best_val_rec * 100))
-            f.write("Final Recall@1: %.4f\n" % (val_recall * 100))
+            f.write('Recall K: %s\n' % opts.recall)
+            f.write('Best Train Recall: %s\n' % [round(v * 100, 4) for v in best_train_rec])
+            f.write('Best Test Recall: %s\n' % [round(v * 100, 4) for v in best_val_rec])
+            f.write('Final Test Recall: %s\n' % [round(v * 100, 4) for v in val_recall])
 
-    print("Best Train Recall: %.4f" % best_train_rec)
-    print("Best Eval Recall: %.4f" % best_val_rec)
+    print("Best Train Recall@%d: %.4f" % (primary_recall_k, best_train_rec[0]))
+    print("Best Eval Recall@%d: %.4f" % (primary_recall_k, best_val_rec[0]))
 
-run.summary['best_train_recall1'] = best_train_rec
-run.summary['best_test_recall1'] = best_val_rec
-run.summary['final_test_recall1'] = val_recall
+_log_confusion_matrix('best/test', best_val_embeddings, best_val_labels, step=opts.epochs)
+
+run.log({'metrics/epoch_table': history_table})
+
+metrics_path = os.path.join(opts.save_dir if opts.save_dir is not None else '.', 'distill_epoch_metrics.csv')
+with open(metrics_path, 'w') as f:
+    writer = csv.writer(f)
+    writer.writerow(history_columns)
+    for row in history_table.data:
+        writer.writerow(row)
+
+metrics_artifact = wandb.Artifact(
+    name='distill-metrics-%s' % run.id,
+    type='metrics',
+    metadata={
+        'dataset': _name(opts.dataset),
+        'base': _name(opts.base),
+        'teacher_base': _name(opts.teacher_base),
+        'recall': opts.recall,
+        'primary_recall_k': primary_recall_k,
+    },
+)
+metrics_artifact.add_file(metrics_path)
+run.log_artifact(metrics_artifact)
+
+run.summary['recall_k'] = opts.recall
+run.summary['best_train_recall_primary'] = best_train_rec[0]
+run.summary['best_test_recall_primary'] = best_val_rec[0]
+run.summary['final_test_recall_primary'] = val_recall[0]
+for i, k in enumerate(opts.recall):
+    run.summary['best_train_recall%d' % k] = best_train_rec[i]
+    run.summary['best_test_recall%d' % k] = best_val_rec[i]
+    run.summary['final_test_recall%d' % k] = val_recall[i]
+
 run.finish()

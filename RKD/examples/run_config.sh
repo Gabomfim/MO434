@@ -22,6 +22,8 @@ WANDB_PROJECT="rkd-metric-learning"
 WANDB_ENTITY=""           # leave empty to use your default account/entity
 WANDB_RUN_NAME=""         # leave empty to auto-generate
 WANDB_MODE="online"       # online | offline | disabled
+WANDB_GROUP="teacher-runs"
+MAX_CONFUSION_CLASSES=300
 
 # Training parameters
 SAMPLE="distance"
@@ -63,6 +65,8 @@ if [[ "$MODE" == "train" ]]; then
     --save_dir "$SAVE_DIR"
     --wandb_project "$WANDB_PROJECT"
     --wandb_run_name "$WANDB_RUN_NAME"
+    --wandb_group "$WANDB_GROUP"
+    --max_confusion_classes "$MAX_CONFUSION_CLASSES"
     --wandb_mode "$WANDB_MODE"
   )
 
@@ -85,6 +89,8 @@ elif [[ "$MODE" == "eval" ]]; then
     --data "$DATA_DIR"
     --wandb_project "$WANDB_PROJECT"
     --wandb_run_name "$WANDB_RUN_NAME"
+    --wandb_group "$WANDB_GROUP"
+    --max_confusion_classes "$MAX_CONFUSION_CLASSES"
     --wandb_mode "$WANDB_MODE"
   )
 

@@ -2,6 +2,7 @@ import os
 import argparse
 import random
 import socket
+import csv
 
 import torch
 import torch.optim as optim
@@ -18,7 +19,7 @@ import metric.pairsampler as pair
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-from metric.utils import recall
+from metric.utils import pdist
 from metric.batchsampler import NPairs
 from model.embedding import LinearEmbedding
 
@@ -87,7 +88,14 @@ parser.add_argument('--wandb_project', default='rkd-metric-learning')
 parser.add_argument('--wandb_entity', default=None)
 parser.add_argument('--wandb_run_name', default=None)
 parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online')
+parser.add_argument('--wandb_group', default='teacher-runs')
+parser.add_argument('--max_confusion_classes', default=300, type=int)
 opts = parser.parse_args()
+
+if 1 not in opts.recall:
+    opts.recall = [1] + opts.recall
+
+primary_recall_k = opts.recall[0]
 
 
 for set_random_seed in [random.seed, torch.manual_seed, torch.cuda.manual_seed_all]:
@@ -136,6 +144,7 @@ run = wandb.init(
     entity=opts.wandb_entity,
     name=opts.wandb_run_name,
     mode=opts.wandb_mode,
+    group=opts.wandb_group,
     config={
         'mode': opts.mode,
         'dataset': _name(opts.dataset),
@@ -157,6 +166,8 @@ run = wandb.init(
         'data': opts.data,
         'save_dir': opts.save_dir,
         'load': opts.load,
+        'wandb_group': opts.wandb_group,
+        'max_confusion_classes': opts.max_confusion_classes,
     },
     tags=['rkd', 'metric-learning', 'run.py'],
 )
@@ -237,52 +248,134 @@ def eval(net, loader, ep):
 
         embeddings_all = torch.cat(embeddings_all).cpu()
         labels_all = torch.cat(labels_all).cpu()
-        rec = recall(embeddings_all, labels_all, K=K)
+        metrics, _, _ = eval_metrics(embeddings_all, labels_all, K)
 
-        for k, r in zip(K, rec):
+        for k in K:
+            r = metrics['recall@%d' % k]
             print('[Epoch %d] Recall@%d: [%.4f]\n' % (ep, k, 100 * r))
 
-    return rec[0]
+    return metrics
+
+
+def eval_metrics(embeddings, labels, K):
+    D = pdist(embeddings, squared=True)
+    max_k = max(K)
+    knn_inds = D.topk(1 + max_k, dim=1, largest=False, sorted=True)[1][:, 1:]
+
+    selected_labels = labels[knn_inds.contiguous().view(-1)].view_as(knn_inds)
+    correct_labels = labels.unsqueeze(1) == selected_labels
+
+    metrics = {}
+    for k in K:
+        metrics['recall@%d' % k] = (correct_labels[:, :k].sum(dim=1) > 0).float().mean().item()
+
+    # Nearest-neighbor label used for confusion matrix style analysis.
+    pred_top1 = selected_labels[:, 0]
+    return metrics, labels, pred_top1
+
+
+def maybe_log_confusion(prefix, labels, preds):
+    class_vals = sorted(set(labels.tolist()))
+    class_count = len(class_vals)
+    run.summary['%s_confusion_class_count' % prefix] = class_count
+
+    if class_count > opts.max_confusion_classes:
+        run.summary['%s_confusion_logged' % prefix] = False
+        run.summary['%s_confusion_reason' % prefix] = 'too_many_classes'
+        return
+
+    class_to_idx = {c: i for i, c in enumerate(class_vals)}
+    y_true = [class_to_idx[int(x)] for x in labels.tolist()]
+    y_pred = [class_to_idx[int(x)] for x in preds.tolist()]
+    class_names = [str(c) for c in class_vals]
+
+    run.log({
+        '%s/confusion_matrix' % prefix: wandb.plot.confusion_matrix(
+            y_true=y_true,
+            preds=y_pred,
+            class_names=class_names,
+        )
+    })
+    run.summary['%s_confusion_logged' % prefix] = True
 
 
 if opts.mode == "eval":
-    train_rec = eval(model, loader_train_eval, 0)
-    test_rec = eval(model, loader_eval, 0)
-    run.log({
-        'eval/train_recall1': train_rec,
-        'eval/test_recall1': test_rec,
-        'epoch': 0,
-    }, step=0)
-    run.summary['final_train_recall1'] = train_rec
-    run.summary['final_test_recall1'] = test_rec
-else:
-    train_recall = eval(model, loader_train_eval, 0)
-    val_recall = eval(model, loader_eval, 0)
-    best_rec = val_recall
+    train_metrics = eval(model, loader_train_eval, 0)
+    test_metrics = eval(model, loader_eval, 0)
 
-    run.log({
+    eval_payload = {'epoch': 0}
+    for k in opts.recall:
+        eval_payload['eval/train_recall@%d' % k] = train_metrics['recall@%d' % k]
+        eval_payload['eval/test_recall@%d' % k] = test_metrics['recall@%d' % k]
+    run.log(eval_payload, step=0)
+
+    # Build confusion matrix only in eval mode to avoid expensive repeated plotting.
+    model.eval()
+    with torch.no_grad():
+        emb_eval, labels_eval = [], []
+        for images, labels in loader_eval:
+            images = images.cuda()
+            emb_eval.append(model(images).data.cpu())
+            labels_eval.append(labels)
+        emb_eval = torch.cat(emb_eval)
+        labels_eval = torch.cat(labels_eval)
+    _, cm_labels, cm_preds = eval_metrics(emb_eval, labels_eval, opts.recall)
+    maybe_log_confusion('eval_test', cm_labels, cm_preds)
+
+    for k in opts.recall:
+        run.summary['final_train_recall@%d' % k] = train_metrics['recall@%d' % k]
+        run.summary['final_test_recall@%d' % k] = test_metrics['recall@%d' % k]
+else:
+    history_rows = []
+    history_table = wandb.Table(columns=['epoch', 'train_loss', 'lr', 'best_recall@1'] +
+                                ['train_recall@%d' % k for k in opts.recall] +
+                                ['test_recall@%d' % k for k in opts.recall])
+
+    train_metrics = eval(model, loader_train_eval, 0)
+    val_metrics = eval(model, loader_eval, 0)
+    best_rec = val_metrics['recall@%d' % primary_recall_k]
+
+    log_payload = {
         'epoch': 0,
-        'eval/train_recall1': train_recall,
-        'eval/test_recall1': val_recall,
-        'best_recall1': best_rec,
-    }, step=0)
+        'best_recall@%d' % primary_recall_k: best_rec,
+        'lr': optimizer.param_groups[0]['lr'],
+    }
+    for k in opts.recall:
+        log_payload['eval/train_recall@%d' % k] = train_metrics['recall@%d' % k]
+        log_payload['eval/test_recall@%d' % k] = val_metrics['recall@%d' % k]
+    run.log(log_payload, step=0)
+
+    row = {
+        'epoch': 0,
+        'train_loss': float('nan'),
+        'lr': optimizer.param_groups[0]['lr'],
+        'best_recall@1': best_rec,
+    }
+    for k in opts.recall:
+        row['train_recall@%d' % k] = train_metrics['recall@%d' % k]
+        row['test_recall@%d' % k] = val_metrics['recall@%d' % k]
+    history_rows.append(row)
+    history_table.add_data(*[row[c] for c in history_table.columns])
 
     for epoch in range(1, opts.epochs+1):
         train_loss = train(model, loader_train_sample, epoch)
-        train_recall = eval(model, loader_train_eval, epoch)
-        val_recall = eval(model, loader_eval, epoch)
+        train_metrics = eval(model, loader_train_eval, epoch)
+        val_metrics = eval(model, loader_eval, epoch)
+        val_recall1 = val_metrics['recall@%d' % primary_recall_k]
 
-        run.log({
+        log_payload = {
             'epoch': epoch,
             'train/loss': train_loss,
-            'eval/train_recall1': train_recall,
-            'eval/test_recall1': val_recall,
-            'best_recall1': best_rec,
+            'best_recall@%d' % primary_recall_k: best_rec,
             'lr': optimizer.param_groups[0]['lr'],
-        }, step=epoch)
+        }
+        for k in opts.recall:
+            log_payload['eval/train_recall@%d' % k] = train_metrics['recall@%d' % k]
+            log_payload['eval/test_recall@%d' % k] = val_metrics['recall@%d' % k]
+        run.log(log_payload, step=epoch)
 
-        if best_rec < val_recall:
-            best_rec = val_recall
+        if best_rec < val_recall1:
+            best_rec = val_recall1
             if opts.save_dir is not None:
                 if not os.path.isdir(opts.save_dir):
                     os.mkdir(opts.save_dir)
@@ -291,7 +384,7 @@ else:
                 best_artifact = wandb.Artifact(
                     name='model-best-%s-%s' % (_name(opts.base).lower(), opts.seed),
                     type='model',
-                    metadata={'epoch': epoch, 'best_recall1': best_rec},
+                    metadata={'epoch': epoch, 'best_recall@%d' % primary_recall_k: best_rec},
                 )
                 best_artifact.add_file(best_path)
                 run.log_artifact(best_artifact, aliases=['best'])
@@ -303,17 +396,62 @@ else:
             last_artifact = wandb.Artifact(
                 name='model-last-%s-%s' % (_name(opts.base).lower(), opts.seed),
                 type='model',
-                metadata={'epoch': epoch, 'final_recall1': val_recall},
+                metadata={'epoch': epoch, 'final_recall@%d' % primary_recall_k: val_recall1},
             )
             last_artifact.add_file(last_path)
             run.log_artifact(last_artifact, aliases=['last'])
             with open("%s/result.txt"%opts.save_dir, 'w') as f:
                 f.write("Best Recall@1: %.4f\n" % (best_rec * 100))
-                f.write("Final Recall@1: %.4f\n" % (val_recall * 100))
+                f.write("Final Recall@1: %.4f\n" % (val_recall1 * 100))
+
+        row = {
+            'epoch': epoch,
+            'train_loss': train_loss,
+            'lr': optimizer.param_groups[0]['lr'],
+            'best_recall@1': best_rec,
+        }
+        for k in opts.recall:
+            row['train_recall@%d' % k] = train_metrics['recall@%d' % k]
+            row['test_recall@%d' % k] = val_metrics['recall@%d' % k]
+        history_rows.append(row)
+        history_table.add_data(*[row[c] for c in history_table.columns])
 
         print("Best Recall@1: %.4f" % best_rec)
 
-    run.summary['best_recall1'] = best_rec
-    run.summary['final_recall1'] = val_recall
+    run.log({'artifacts/epoch_history_table': history_table})
+
+    history_dir = opts.save_dir if opts.save_dir is not None else '.'
+    if not os.path.isdir(history_dir):
+        os.mkdir(history_dir)
+    history_csv_path = os.path.join(history_dir, 'teacher_epoch_history.csv')
+    with open(history_csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=history_table.columns)
+        writer.writeheader()
+        for r in history_rows:
+            writer.writerow(r)
+
+    history_artifact = wandb.Artifact(
+        name='teacher-history-%s-%s' % (_name(opts.base).lower(), opts.seed),
+        type='metrics',
+        metadata={'rows': len(history_rows), 'recall_k': opts.recall},
+    )
+    history_artifact.add_file(history_csv_path)
+    run.log_artifact(history_artifact, aliases=['latest'])
+
+    # Build confusion matrix for final test embeddings.
+    model.eval()
+    with torch.no_grad():
+        emb_eval, labels_eval = [], []
+        for images, labels in loader_eval:
+            images = images.cuda()
+            emb_eval.append(model(images).data.cpu())
+            labels_eval.append(labels)
+        emb_eval = torch.cat(emb_eval)
+        labels_eval = torch.cat(labels_eval)
+    _, cm_labels, cm_preds = eval_metrics(emb_eval, labels_eval, opts.recall)
+    maybe_log_confusion('final_test', cm_labels, cm_preds)
+
+    run.summary['best_recall@%d' % primary_recall_k] = best_rec
+    run.summary['final_recall@%d' % primary_recall_k] = history_rows[-1]['test_recall@%d' % primary_recall_k]
 
 run.finish()
