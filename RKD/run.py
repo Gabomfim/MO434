@@ -199,7 +199,9 @@ def run_experiment(opts):
     )
 
     should_download = not _dataset_already_available(opts.dataset, opts.data)
-    print(f"Dataset available locally: {not should_download}. download={should_download}")
+    print(
+        f"Dataset available locally: {not should_download}. download={should_download}"
+    )
 
     dataset_train = opts.dataset(
         opts.data, train=True, transform=train_transform, download=should_download
