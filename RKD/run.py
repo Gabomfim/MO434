@@ -119,7 +119,7 @@ def _params_to_cli_args(params):
     for key, value in params.items():
         if value is None:
             continue
-        flag = "--" + key.replace("_", "-")
+        flag = "--" + key
         if isinstance(value, (list, tuple)):
             cli_args.append(flag)
             cli_args.extend([str(v) for v in value])
