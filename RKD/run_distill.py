@@ -100,6 +100,8 @@ def build_parser():
     parser.add_argument('--wandb_run_name', default=None)
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online')
     parser.add_argument('--wandb_group', default='distillation-experiments')
+    parser.add_argument('--wandb_job_type', default='distillation')
+    parser.add_argument('--wandb_tags', nargs='*', default=None)
     return parser
 
 
@@ -119,6 +121,15 @@ def _params_to_cli_args(params):
         else:
             cli_args.extend([flag, str(value)])
     return cli_args
+
+
+def _alias_safe(value):
+    text = str(value).lower()
+    out = []
+    for ch in text:
+        out.append(ch if ch.isalnum() else '-')
+    alias = ''.join(out).strip('-')
+    return alias or 'na'
 
 
 def run_experiment(opts):
@@ -167,12 +178,17 @@ def run_experiment(opts):
     print('Number of images in Training Set: %d' % len(dataset_train))
     print('Number of images in Test set: %d' % len(dataset_eval))
 
+    base_tags = ['rkd', 'metric-learning', 'distillation', 'run_distill.py']
+    if opts.wandb_tags:
+        base_tags.extend(opts.wandb_tags)
+
     run = wandb.init(
         project=opts.wandb_project,
         entity=opts.wandb_entity,
         name=opts.wandb_run_name,
         mode=opts.wandb_mode,
         group=opts.wandb_group,
+        job_type=opts.wandb_job_type,
         config={
             'dataset': _name(opts.dataset),
             'base': _name(opts.base),
@@ -206,8 +222,10 @@ def run_experiment(opts):
             'save_dir': opts.save_dir,
             'load': opts.load,
             'wandb_group': opts.wandb_group,
+            'wandb_job_type': opts.wandb_job_type,
+            'wandb_tags': opts.wandb_tags,
         },
-        tags=['rkd', 'metric-learning', 'distillation', 'run_distill.py'],
+        tags=base_tags,
     )
 
     run.summary['hostname'] = socket.gethostname()
@@ -252,6 +270,10 @@ def run_experiment(opts):
     student = student.cuda()
     teacher = teacher.cuda()
 
+    # Log parameter/gradient flow and model graph for richer W&B debugging.
+    if opts.wandb_mode != 'disabled':
+        wandb.watch(student, log='all', log_graph=True, log_freq=100)
+
     optimizer = optim.Adam(student.parameters(), lr=opts.lr, weight_decay=1e-5)
     lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=opts.lr_decay_epochs, gamma=opts.lr_decay_gamma)
 
@@ -282,6 +304,9 @@ def run_experiment(opts):
             'best_test_recall%d' % k,
         ])
     history_table = wandb.Table(columns=history_columns)
+    error_epochs = []
+    train_errors = []
+    val_errors = []
 
     def _recall_log_dict(prefix, rec_values):
         out = {}
@@ -460,6 +485,10 @@ def run_experiment(opts):
         **_recall_log_dict('eval/test', best_val_rec),
         **_recall_log_dict('best/train', best_train_rec),
         **_recall_log_dict('best/test', best_val_rec),
+        'eval/train_error@%d' % primary_recall_k: 1.0 - best_train_rec[0],
+        'eval/test_error@%d' % primary_recall_k: 1.0 - best_val_rec[0],
+        'best/train_error@%d' % primary_recall_k: 1.0 - best_train_rec[0],
+        'best/test_error@%d' % primary_recall_k: 1.0 - best_val_rec[0],
     }, step=0)
 
     _append_history_row(
@@ -471,6 +500,9 @@ def run_experiment(opts):
         best_test_rec=best_val_rec,
         lr=optimizer.param_groups[0]['lr'],
     )
+    error_epochs.append(0)
+    train_errors.append(1.0 - best_train_rec[0])
+    val_errors.append(1.0 - best_val_rec[0])
     _log_confusion_matrix('eval/test', best_val_embeddings, best_val_labels, step=0)
 
     for epoch in range(1, opts.epochs + 1):
@@ -491,6 +523,10 @@ def run_experiment(opts):
             **_recall_log_dict('eval/test', val_recall),
             **_recall_log_dict('best/train', best_train_rec),
             **_recall_log_dict('best/test', best_val_rec),
+            'eval/train_error@%d' % primary_recall_k: 1.0 - train_recall[0],
+            'eval/test_error@%d' % primary_recall_k: 1.0 - val_recall[0],
+            'best/train_error@%d' % primary_recall_k: 1.0 - best_train_rec[0],
+            'best/test_error@%d' % primary_recall_k: 1.0 - best_val_rec[0],
             'lr': optimizer.param_groups[0]['lr'],
         }, step=epoch)
 
@@ -518,7 +554,13 @@ def run_experiment(opts):
                     },
                 )
                 best_artifact.add_file(best_path)
-                run.log_artifact(best_artifact, aliases=['best'])
+                run.log_artifact(best_artifact, aliases=[
+                    'best',
+                    'epoch-%d' % epoch,
+                    'dataset-%s' % _alias_safe(_name(opts.dataset)),
+                    'group-%s' % _alias_safe(opts.wandb_group),
+                    'job-%s' % _alias_safe(opts.wandb_job_type),
+                ])
 
         _append_history_row(
             epoch=epoch,
@@ -529,6 +571,9 @@ def run_experiment(opts):
             best_test_rec=best_val_rec,
             lr=optimizer.param_groups[0]['lr'],
         )
+        error_epochs.append(epoch)
+        train_errors.append(1.0 - train_recall[0])
+        val_errors.append(1.0 - val_recall[0])
 
         if opts.save_dir is not None:
             if not os.path.isdir(opts.save_dir):
@@ -546,7 +591,13 @@ def run_experiment(opts):
                 },
             )
             last_artifact.add_file(last_path)
-            run.log_artifact(last_artifact, aliases=['last'])
+            run.log_artifact(last_artifact, aliases=[
+                'last',
+                'epoch-%d' % epoch,
+                'dataset-%s' % _alias_safe(_name(opts.dataset)),
+                'group-%s' % _alias_safe(opts.wandb_group),
+                'job-%s' % _alias_safe(opts.wandb_job_type),
+            ])
             with open('%s/result.txt' % opts.save_dir, 'w', encoding='utf-8') as f:
                 f.write('Recall K: %s\n' % opts.recall)
                 f.write('Best Train Recall: %s\n' % [round(v * 100, 4) for v in best_train_rec])
@@ -559,6 +610,15 @@ def run_experiment(opts):
     _log_confusion_matrix('best/test', best_val_embeddings, best_val_labels, step=opts.epochs)
 
     run.log({'metrics/epoch_table': history_table})
+    run.log({
+        'charts/train_val_error_curve': wandb.plot.line_series(
+            xs=error_epochs,
+            ys=[train_errors, val_errors],
+            keys=['train_error@%d' % primary_recall_k, 'val_error@%d' % primary_recall_k],
+            title='Train vs Validation Error (Recall@%d)' % primary_recall_k,
+            xname='epoch',
+        )
+    })
 
     metrics_path = os.path.join(opts.save_dir if opts.save_dir is not None else '.', 'distill_epoch_metrics.csv')
     with open(metrics_path, 'w', encoding='utf-8') as f:

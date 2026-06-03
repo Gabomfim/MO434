@@ -93,6 +93,8 @@ def build_parser():
     parser.add_argument('--wandb_run_name', default=None)
     parser.add_argument('--wandb_mode', choices=['online', 'offline', 'disabled'], default='online')
     parser.add_argument('--wandb_group', default='teacher-runs')
+    parser.add_argument('--wandb_job_type', default='teacher')
+    parser.add_argument('--wandb_tags', nargs='*', default=None)
     parser.add_argument('--max_confusion_classes', default=300, type=int)
     return parser
 
@@ -113,6 +115,15 @@ def _params_to_cli_args(params):
         else:
             cli_args.extend([flag, str(value)])
     return cli_args
+
+
+def _alias_safe(value):
+    text = str(value).lower()
+    out = []
+    for ch in text:
+        out.append(ch if ch.isalnum() else '-')
+    alias = ''.join(out).strip('-')
+    return alias or 'na'
 
 
 def run_experiment(opts):
@@ -155,12 +166,17 @@ def run_experiment(opts):
     print('Number of images in Training Set: %d' % len(dataset_train))
     print('Number of images in Test set: %d' % len(dataset_eval))
 
+    base_tags = ['rkd', 'metric-learning', 'run.py']
+    if opts.wandb_tags:
+        base_tags.extend(opts.wandb_tags)
+
     run = wandb.init(
         project=opts.wandb_project,
         entity=opts.wandb_entity,
         name=opts.wandb_run_name,
         mode=opts.wandb_mode,
         group=opts.wandb_group,
+        job_type=opts.wandb_job_type,
         config={
             'mode': opts.mode,
             'dataset': _name(opts.dataset),
@@ -183,9 +199,11 @@ def run_experiment(opts):
             'save_dir': opts.save_dir,
             'load': opts.load,
             'wandb_group': opts.wandb_group,
+            'wandb_job_type': opts.wandb_job_type,
+            'wandb_tags': opts.wandb_tags,
             'max_confusion_classes': opts.max_confusion_classes,
         },
-        tags=['rkd', 'metric-learning', 'run.py'],
+        tags=base_tags,
     )
 
     run.summary['hostname'] = socket.gethostname()
@@ -217,6 +235,10 @@ def run_experiment(opts):
                             output_size=base_model.output_size,
                             embedding_size=opts.embedding_size,
                             normalize=opts.l2normalize == 'true').cuda()
+
+    # Log parameter/gradient flow and model graph for richer W&B debugging.
+    if opts.wandb_mode != 'disabled':
+        wandb.watch(model, log='all', log_graph=True, log_freq=100)
 
     if opts.load is not None:
         model.load_state_dict(torch.load(opts.load))
@@ -313,10 +335,15 @@ def run_experiment(opts):
         train_metrics = eval(model, loader_train_eval, 0)
         test_metrics = eval(model, loader_eval, 0)
 
+        train_error = 1.0 - train_metrics['recall@%d' % primary_recall_k]
+        test_error = 1.0 - test_metrics['recall@%d' % primary_recall_k]
+
         eval_payload = {'epoch': 0}
         for k in opts.recall:
             eval_payload['eval/train_recall@%d' % k] = train_metrics['recall@%d' % k]
             eval_payload['eval/test_recall@%d' % k] = test_metrics['recall@%d' % k]
+        eval_payload['eval/train_error@%d' % primary_recall_k] = train_error
+        eval_payload['eval/test_error@%d' % primary_recall_k] = test_error
         run.log(eval_payload, step=0)
 
         model.eval()
@@ -334,11 +361,23 @@ def run_experiment(opts):
         for k in opts.recall:
             run.summary['final_train_recall@%d' % k] = train_metrics['recall@%d' % k]
             run.summary['final_test_recall@%d' % k] = test_metrics['recall@%d' % k]
+        run.log({
+            'charts/train_val_error_curve': wandb.plot.line_series(
+                xs=[0],
+                ys=[[train_error], [test_error]],
+                keys=['train_error@%d' % primary_recall_k, 'val_error@%d' % primary_recall_k],
+                title='Train vs Validation Error (Recall@%d)' % primary_recall_k,
+                xname='epoch',
+            )
+        })
     else:
         history_rows = []
         history_table = wandb.Table(columns=['epoch', 'train_loss', 'lr', 'best_recall@1'] +
                                     ['train_recall@%d' % k for k in opts.recall] +
                                     ['test_recall@%d' % k for k in opts.recall])
+        error_epochs = []
+        train_errors = []
+        val_errors = []
 
         train_metrics = eval(model, loader_train_eval, 0)
         val_metrics = eval(model, loader_eval, 0)
@@ -347,6 +386,9 @@ def run_experiment(opts):
         log_payload = {
             'epoch': 0,
             'best_recall@%d' % primary_recall_k: best_rec,
+            'best_error@%d' % primary_recall_k: 1.0 - best_rec,
+            'eval/train_error@%d' % primary_recall_k: 1.0 - train_metrics['recall@%d' % primary_recall_k],
+            'eval/test_error@%d' % primary_recall_k: 1.0 - val_metrics['recall@%d' % primary_recall_k],
             'lr': optimizer.param_groups[0]['lr'],
         }
         for k in opts.recall:
@@ -365,6 +407,9 @@ def run_experiment(opts):
             row['test_recall@%d' % k] = val_metrics['recall@%d' % k]
         history_rows.append(row)
         history_table.add_data(*[row[c] for c in history_table.columns])
+        error_epochs.append(0)
+        train_errors.append(1.0 - train_metrics['recall@%d' % primary_recall_k])
+        val_errors.append(1.0 - val_metrics['recall@%d' % primary_recall_k])
 
         for epoch in range(1, opts.epochs + 1):
             train_loss = train(model, loader_train_sample, epoch)
@@ -376,6 +421,9 @@ def run_experiment(opts):
                 'epoch': epoch,
                 'train/loss': train_loss,
                 'best_recall@%d' % primary_recall_k: best_rec,
+                'best_error@%d' % primary_recall_k: 1.0 - best_rec,
+                'eval/train_error@%d' % primary_recall_k: 1.0 - train_metrics['recall@%d' % primary_recall_k],
+                'eval/test_error@%d' % primary_recall_k: 1.0 - val_metrics['recall@%d' % primary_recall_k],
                 'lr': optimizer.param_groups[0]['lr'],
             }
             for k in opts.recall:
@@ -396,7 +444,13 @@ def run_experiment(opts):
                         metadata={'epoch': epoch, 'best_recall@%d' % primary_recall_k: best_rec},
                     )
                     best_artifact.add_file(best_path)
-                    run.log_artifact(best_artifact, aliases=['best'])
+                    run.log_artifact(best_artifact, aliases=[
+                        'best',
+                        'epoch-%d' % epoch,
+                        'dataset-%s' % _alias_safe(_name(opts.dataset)),
+                        'group-%s' % _alias_safe(opts.wandb_group),
+                        'job-%s' % _alias_safe(opts.wandb_job_type),
+                    ])
             if opts.save_dir is not None:
                 if not os.path.isdir(opts.save_dir):
                     os.mkdir(opts.save_dir)
@@ -408,7 +462,13 @@ def run_experiment(opts):
                     metadata={'epoch': epoch, 'final_recall@%d' % primary_recall_k: val_recall1},
                 )
                 last_artifact.add_file(last_path)
-                run.log_artifact(last_artifact, aliases=['last'])
+                run.log_artifact(last_artifact, aliases=[
+                    'last',
+                    'epoch-%d' % epoch,
+                    'dataset-%s' % _alias_safe(_name(opts.dataset)),
+                    'group-%s' % _alias_safe(opts.wandb_group),
+                    'job-%s' % _alias_safe(opts.wandb_job_type),
+                ])
                 with open('%s/result.txt' % opts.save_dir, 'w') as f:
                     f.write('Best Recall@1: %.4f\n' % (best_rec * 100))
                     f.write('Final Recall@1: %.4f\n' % (val_recall1 * 100))
@@ -424,10 +484,22 @@ def run_experiment(opts):
                 row['test_recall@%d' % k] = val_metrics['recall@%d' % k]
             history_rows.append(row)
             history_table.add_data(*[row[c] for c in history_table.columns])
+            error_epochs.append(epoch)
+            train_errors.append(1.0 - train_metrics['recall@%d' % primary_recall_k])
+            val_errors.append(1.0 - val_metrics['recall@%d' % primary_recall_k])
 
             print('Best Recall@1: %.4f' % best_rec)
 
         run.log({'artifacts/epoch_history_table': history_table})
+        run.log({
+            'charts/train_val_error_curve': wandb.plot.line_series(
+                xs=error_epochs,
+                ys=[train_errors, val_errors],
+                keys=['train_error@%d' % primary_recall_k, 'val_error@%d' % primary_recall_k],
+                title='Train vs Validation Error (Recall@%d)' % primary_recall_k,
+                xname='epoch',
+            )
+        })
 
         history_dir = opts.save_dir if opts.save_dir is not None else '.'
         if not os.path.isdir(history_dir):
