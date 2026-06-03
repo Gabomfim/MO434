@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Dataset / paths
 DATASET="cub200"
-DATA_DIR="data"
+DATA_DIR="../data"
 SAVE_DIR="student"
 LOAD_PATH=""  # optional student checkpoint to resume from
 

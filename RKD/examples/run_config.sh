@@ -13,7 +13,7 @@ DATASET="cub200"
 BASE="resnet50"
 EMBEDDING_SIZE=512
 L2NORMALIZE="true"
-DATA_DIR="data"
+DATA_DIR="../data"
 SAVE_DIR="teacher"
 SEED=42
 
