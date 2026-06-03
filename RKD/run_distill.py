@@ -158,6 +158,24 @@ def _alias_safe(value):
     return alias or "na"
 
 
+def _dataset_already_available(dataset_cls, data_root):
+    dataset_name = _name(dataset_cls).lower()
+    root = os.path.abspath(data_root)
+
+    if "cub" in dataset_name:
+        return os.path.exists(os.path.join(root, "CUB_200_2011", "images.txt"))
+
+    if "cars196" in dataset_name:
+        return os.path.exists(os.path.join(root, "Cars196", "cars_annos.mat"))
+
+    if "stanford" in dataset_name:
+        return os.path.exists(
+            os.path.join(root, "Stanford_Online_Products", "Ebay_train.txt")
+        )
+
+    return False
+
+
 def run_experiment(opts):
     student_base = opts.base(pretrained=True)
     teacher_base = opts.teacher_base(pretrained=False)
@@ -203,14 +221,17 @@ def run_experiment(opts):
         ]
     )
 
+    should_download = not _dataset_already_available(opts.dataset, opts.data)
+    print(f"Dataset available locally: {not should_download}. download={should_download}")
+
     dataset_train = opts.dataset(
-        opts.data, train=True, transform=train_transform, download=True
+        opts.data, train=True, transform=train_transform, download=should_download
     )
     dataset_train_eval = opts.dataset(
-        opts.data, train=True, transform=test_transform, download=True
+        opts.data, train=True, transform=test_transform, download=should_download
     )
     dataset_eval = opts.dataset(
-        opts.data, train=False, transform=test_transform, download=True
+        opts.data, train=False, transform=test_transform, download=should_download
     )
 
     print("Number of images in Training Set: %d" % len(dataset_train))
