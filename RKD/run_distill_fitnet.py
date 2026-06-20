@@ -16,6 +16,7 @@ from metric.utils import recall
 from metric.batchsampler import NPairs
 from metric.loss import HardDarkRank, RkdDistance, RKdAngle, L2Triplet, FitNet
 from model.embedding import LinearEmbedding
+from wandb_artifacts import resolve_teacher_checkpoint
 
 
 parser = argparse.ArgumentParser()
@@ -64,7 +65,11 @@ parser.add_argument('--triplet_margin', type=float, default=0.2)
 parser.add_argument('--l2normalize', choices=['true', 'false'], default='true')
 parser.add_argument('--embedding_size', default=128, type=int)
 
-parser.add_argument('--teacher_load', default=None, required=True)
+parser.add_argument('--teacher_load', default=None)
+parser.add_argument('--teacher_artifact', default=None,
+                    help="W&B teacher artifact ref 'entity/project/name:alias' "
+                         "(e.g. 'me/rkd/model-best-resnet50-7:best'). Mutually "
+                         "exclusive with --teacher_load; exactly one is required.")
 parser.add_argument('--teacher_l2normalize', choices=['true', 'false'], default='true')
 parser.add_argument('--teacher_embedding_size', default=128, type=int)
 
@@ -78,6 +83,8 @@ parser.add_argument('--lr_decay_gamma', type=float, default=0.1)
 parser.add_argument('--save_dir', default=None)
 
 opts = parser.parse_args()
+if (opts.teacher_load is None) == (opts.teacher_artifact is None):
+    parser.error("Provide exactly one of --teacher_load or --teacher_artifact")
 student_base = opts.base(pretrained=True)
 teacher_base = opts.teacher_base(pretrained=False)
 
@@ -144,7 +151,10 @@ teacher = LinearEmbedding(teacher_base,
                           embedding_size=opts.teacher_embedding_size,
                           normalize=opts.teacher_l2normalize == 'true')
 
-teacher.load_state_dict(torch.load(opts.teacher_load))
+teacher_ckpt = resolve_teacher_checkpoint(teacher_load=opts.teacher_load,
+                                          teacher_artifact=opts.teacher_artifact)
+teacher.load_state_dict(torch.load(teacher_ckpt))
+print("Loaded teacher from %s" % teacher_ckpt)
 student = student.cuda()
 teacher = teacher.cuda()
 

@@ -23,6 +23,7 @@ from metric.utils import pdist, recall
 from model.embedding import LinearEmbedding
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from wandb_artifacts import resolve_teacher_checkpoint
 
 
 class LookupChoices(argparse.Action):
@@ -96,7 +97,14 @@ def build_parser():
     parser.add_argument("--l2normalize", choices=["true", "false"], default="true")
     parser.add_argument("--embedding_size", default=128, type=int)
 
-    parser.add_argument("--teacher_load", default=None, required=True)
+    parser.add_argument("--teacher_load", default=None)
+    parser.add_argument(
+        "--teacher_artifact",
+        default=None,
+        help="W&B teacher artifact ref (e.g. 'model-best-resnet50-7:best' within "
+        "the run's project, or 'entity/project/name:alias'). Mutually exclusive "
+        "with --teacher_load; exactly one is required.",
+    )
     parser.add_argument(
         "--teacher_l2normalize", choices=["true", "false"], default="true"
     )
@@ -177,6 +185,12 @@ def _dataset_already_available(dataset_cls, data_root):
 
 
 def run_experiment(opts):
+    if (opts.teacher_load is None) == (opts.teacher_artifact is None):
+        raise ValueError(
+            "Provide exactly one of --teacher_load (local path) or "
+            "--teacher_artifact (W&B reference)."
+        )
+
     student_base = opts.base(pretrained=True)
     teacher_base = opts.teacher_base(pretrained=False)
 
@@ -267,6 +281,7 @@ def run_experiment(opts):
             "l2normalize": opts.l2normalize,
             "embedding_size": opts.embedding_size,
             "teacher_load": opts.teacher_load,
+            "teacher_artifact": opts.teacher_artifact,
             "teacher_l2normalize": opts.teacher_l2normalize,
             "teacher_embedding_size": opts.teacher_embedding_size,
             "lr": opts.lr,
@@ -348,7 +363,13 @@ def run_experiment(opts):
         normalize=opts.teacher_l2normalize == "true",
     )
 
-    teacher.load_state_dict(torch.load(opts.teacher_load))
+    teacher_ckpt = resolve_teacher_checkpoint(
+        teacher_load=opts.teacher_load,
+        teacher_artifact=opts.teacher_artifact,
+        run=run,
+    )
+    teacher.load_state_dict(torch.load(teacher_ckpt))
+    print("Loaded teacher from %s" % teacher_ckpt)
     student = student.cuda()
     teacher = teacher.cuda()
 
