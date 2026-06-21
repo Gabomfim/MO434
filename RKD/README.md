@@ -77,6 +77,59 @@ python run.py --mode eval \
             
 ```
 
+## MO434 Extensions — ConvNextMicro, Fine-tuning & Classification Distillation
+
+Beyond the original metric-learning code above, this repo adds a compact
+**ConvNextMicro** classifier (<1M params) and a **classification** distillation
+pipeline that turns a fine-tuned **ResNet-18** into ConvNextMicro.
+
+New scripts / modules:
+
+* `model/convnext_block.py`: `ConvNextBlock` + `Downsample`.
+* `model/convnext_micro.py`: `ConvNextMicro` classifier (configurable `dims`/`depths`, ~0.67M params).
+* `train_convnext.py`: train ConvNextMicro from scratch (ConvNeXt recipe: AdamW, cosine+warmup, mixup/cutmix, RandAugment, EMA).
+* `finetune_resnet18.py`: fine-tune an ImageNet ResNet-18 on `cars196`/`cub200` (official classification split, top-1/top-5).
+* `distill_resnet18_convnext.py`: distill ResNet-18 → ConvNextMicro (Hinton KD + RKD distance/angle + attention map).
+* `distill_convnext.py`: embedding/metric distillation into ConvNextMicro (disjoint metric split).
+* `wandb_artifacts.py`: fetch a teacher from W&B (`resolve_teacher_checkpoint`) and ship trained models as W&B artifacts (`log_model_artifact`).
+
+### Classification Distillation (ResNet-18 → ConvNextMicro)
+
+Combines four techniques: **Hinton KD** (logits), **RKD distance**, **RKD angle**
+(pooled embeddings), and an **attention map** at the student's 2nd non-pointwise
+layer (stage 2, 28×28) paired with ResNet-18 `layer2`. Both teacher and student
+are classifiers on the *official* split, so logit KD is valid.
+
+```bash
+export WANDB_ENTITY="<your-entity>"
+
+# 1) Fine-tune the teacher and register it in W&B (--save_dir + online required)
+python finetune_resnet18.py --dataset cub200 --data ../data --amp \
+  --save_dir finetune/cub200 --wandb_project resnet18-finetune \
+  --wandb_entity "$WANDB_ENTITY" --wandb_run_name resnet18-cub200
+#   -> artifact: $WANDB_ENTITY/resnet18-finetune/resnet18-cub200:best
+
+# 2) Distill the registered teacher into ConvNextMicro (teacher pulled from W&B)
+python distill_resnet18_convnext.py --dataset cub200 --data ../data --amp \
+  --teacher_artifact "$WANDB_ENTITY"/resnet18-finetune/resnet18-cub200:best \
+  --save_dir distill_runs/cub200 --wandb_project resnet18-to-convnext-distill \
+  --wandb_entity "$WANDB_ENTITY" --wandb_run_name distill-cub200
+#   -> artifact: $WANDB_ENTITY/resnet18-to-convnext-distill/convnextmicro-distill-cub200:best
+```
+
+Swap `cub200` → `cars196` for the Cars pipeline. Per-dataset launchers:
+`examples/distill_convnext_cub.sh` and `examples/distill_convnext_cars.sh`.
+
+Tuned defaults (literature-grounded): KD `T=4`, `ce=1.0`/`kd=0.9`; RKD
+`dist=25`, `angle=50`; attention `at=1000`; AdamW `lr=1e-3`, `wd=0.05`, 300
+epochs, 20-epoch warmup. The teacher reference must be **fully qualified**
+(`entity/project/name:alias`) because fine-tune and distill use different W&B
+projects.
+
+> **Full step-by-step guide (PT-BR)** — including W&B login/configuration and
+> how to run the whole pipeline with a **Claude agent** (`/distill-pipeline`) —
+> is in [`README_pipeline_distilacao.md`](README_pipeline_distilacao.md).
+
 ## Repository Files
 
 * `run.py`: Main teacher script for metric learning. Supports training and evaluation with `--mode train|eval`, saves checkpoints (`best.pth`, `last.pth`), and logs metrics/artifacts to W&B.
