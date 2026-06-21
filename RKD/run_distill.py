@@ -373,9 +373,11 @@ def run_experiment(opts):
     student = student.cuda()
     teacher = teacher.cuda()
 
-    # Log parameter/gradient flow and model graph for richer W&B debugging.
+    # Loga apenas o grafo do modelo. log="all" gera centenas de paineis de
+    # gradients/parameters que enterram os paineis de metrica (recall/loss) no
+    # workspace do W&B; log=None mantem o workspace limpo.
     if opts.wandb_mode != "disabled":
-        wandb.watch(student, log="all", log_graph=True, log_freq=100)
+        wandb.watch(student, log=None, log_graph=True, log_freq=100)
 
     optimizer = optim.Adam(student.parameters(), lr=opts.lr, weight_decay=1e-5)
     lr_scheduler = optim.lr_scheduler.MultiStepLR(
@@ -533,7 +535,8 @@ def run_experiment(opts):
             triplet_loss = opts.triplet_ratio * triplet_criterion(e, labels)
             dist_loss = opts.dist_ratio * dist_criterion(e, t_e)
             angle_loss = opts.angle_ratio * angle_criterion(e, t_e)
-            quad_loss = opts.quad_ratio * quad_criterion(e, t_e)
+            quad_loss = (opts.quad_ratio * quad_criterion(e, t_e)
+                         if opts.quad_ratio else e.new_tensor(0.))
             dark_loss = opts.dark_ratio * dark_criterion(e, t_e)
 
             loss = (
