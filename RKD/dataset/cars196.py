@@ -2,11 +2,12 @@ import os
 import tarfile
 import scipy.io as io
 
+from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 from torchvision.datasets.folder import default_loader
 from torchvision.datasets.utils import download_url, check_integrity
 
-__all__ = ['Cars196Metric']
+__all__ = ['Cars196Metric', 'Cars196Classification']
 
 
 class Cars196Metric(ImageFolder):
@@ -81,3 +82,73 @@ class Cars196Metric(ImageFolder):
             if not check_integrity(fpath, md5):
                 return False
         return True
+
+
+class Cars196Classification(Dataset):
+    """Stanford Cars-196 for standard classification fine-tuning.
+
+    Unlike Cars196Metric (which uses a disjoint class split for metric
+    learning), this uses the dataset's *official* train/test split (the
+    per-image ``test`` flag in ``cars_annos.mat``) and keeps all 196 classes
+    in both splits. Labels are 0-indexed in [0, 195]. Returns (image, label).
+    """
+    base_folder = Cars196Metric.base_folder
+    img_url = Cars196Metric.img_url
+    img_filename = Cars196Metric.img_filename
+    img_md5 = Cars196Metric.img_md5
+    anno_url = Cars196Metric.anno_url
+    anno_filename = Cars196Metric.anno_filename
+    anno_md5 = Cars196Metric.anno_md5
+    checklist = Cars196Metric.checklist
+    num_classes = 196
+
+    def __init__(self, root, train=True, transform=None, target_transform=None,
+                 download=False):
+        self.root = os.path.join(root, "Cars196")
+        self.train = train
+        self.transform = transform
+        self.target_transform = target_transform
+        self.loader = default_loader
+
+        if download:
+            download_url(self.img_url, self.root, self.img_filename, self.img_md5)
+            download_url(self.anno_url, self.root, self.anno_filename, self.anno_md5)
+            if not self._check_integrity():
+                cwd = os.getcwd()
+                tar = tarfile.open(os.path.join(self.root, self.img_filename), "r:gz")
+                os.chdir(self.root)
+                tar.extractall()
+                tar.close()
+                os.chdir(cwd)
+
+        if not self._check_integrity() or not check_integrity(
+                os.path.join(self.root, self.anno_filename), self.anno_md5):
+            raise RuntimeError(
+                "Dataset not found or corrupted. Use download=True to download it")
+
+        annotations = io.loadmat(
+            os.path.join(self.root, self.anno_filename))["annotations"][0]
+
+        self.samples = []
+        for a in annotations:
+            is_test = bool(int(a[6][0, 0]))
+            if is_test == self.train:  # keep train samples when train=True
+                continue
+            path = os.path.join(self.root, a[0][0])
+            label = int(a[5][0, 0]) - 1  # 1-indexed in the .mat -> 0-indexed
+            self.samples.append((path, label))
+
+    def _check_integrity(self):
+        return Cars196Metric._check_integrity(self)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        path, label = self.samples[index]
+        image = self.loader(path)
+        if self.transform is not None:
+            image = self.transform(image)
+        if self.target_transform is not None:
+            label = self.target_transform(label)
+        return image, label
