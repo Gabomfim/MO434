@@ -42,6 +42,75 @@ export WANDB_ENTITY="<sua-entidade>"   # ex.: seu usuário do W&B
 
 ---
 
+## Configuração do W&B (login e projeto)
+
+### 1. Pegar a API key e logar
+
+1. Crie/acesse sua conta em <https://wandb.ai> e copie sua chave em
+   <https://wandb.ai/authorize>.
+2. Faça login (uma vez por máquina). A chave fica salva em `~/.netrc`:
+
+   ```bash
+   wandb login
+   # cole a API key quando pedir
+   ```
+
+   Alternativas equivalentes:
+
+   ```bash
+   wandb login <SUA_API_KEY>          # passando a chave direto
+   export WANDB_API_KEY="<SUA_API_KEY>"   # via variável de ambiente (útil em servidores/CI)
+   ```
+
+3. Verifique se está logado:
+
+   ```bash
+   wandb status     # mostra a conta e a entidade default
+   ```
+
+### 2. Descobrir sua entidade (`entity`)
+
+A **entidade** é seu usuário do W&B ou o nome de um time. Você a vê no canto
+superior esquerdo em <https://wandb.ai> ou na URL dos seus projetos
+(`https://wandb.ai/<entidade>/<projeto>`). Use-a em `--wandb_entity` (ou deixe
+em branco para usar a entidade default da sua conta).
+
+### 3. Projetos usados neste pipeline
+
+Os scripts já definem projetos padrão — **não precisa criar nada à mão**, o W&B
+cria o projeto na primeira run:
+
+| Etapa | Projeto (`--wandb_project`) |
+|-------|------------------------------|
+| Fine-tune (Passos 1 e 2) | `resnet18-finetune` |
+| Destilação (Passos 3 e 4) | `resnet18-to-convnext-distill` |
+
+### 4. Formas de configurar entidade/projeto
+
+- **Por flag** (recomendado, explícito): `--wandb_entity` e `--wandb_project`
+  em cada comando (é o que os comandos abaixo fazem).
+- **Por variável de ambiente** (aplica a todas as runs do shell):
+
+  ```bash
+  export WANDB_ENTITY="<sua-entidade>"
+  export WANDB_PROJECT="resnet18-finetune"   # opcional; a flag tem prioridade
+  ```
+
+  > As flags dos scripts têm prioridade sobre as variáveis de ambiente.
+
+### 5. Modos de execução (`--wandb_mode`)
+
+| Modo | Quando usar |
+|------|-------------|
+| `online` (padrão) | Envia métricas **e registra os modelos** no W&B. Use nos 4 passos. |
+| `offline` | Salva localmente; sincronize depois com `wandb sync <dir>`. |
+| `disabled` | Desliga o W&B (testes locais). **Nada é registrado** — nem o modelo. |
+
+> Para que os modelos sejam registrados como artefatos, você precisa de
+> `--wandb_mode online` **e** `--save_dir <dir>` (ambos já estão nos comandos).
+
+---
+
 ## Passo 1 — Fine-tune da ResNet-18 no CUB-200 (e registro no W&B)
 
 ```bash
