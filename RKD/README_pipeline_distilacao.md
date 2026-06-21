@@ -12,6 +12,69 @@ A destilação combina quatro técnicas: **Hinton KD** (logits), **RKD distance*
 **RKD angle** (embeddings) e **mapa de atenção** (stage-2 do aluno ↔ layer2 da
 ResNet-18).
 
+Há **dois caminhos** para rodar este pipeline:
+
+- **A) Com o agente Claude** (automatizado, recomendado) — veja a seção logo abaixo.
+- **B) Manualmente** — rode os comandos dos Passos 1 a 4 você mesmo.
+
+---
+
+## Executar com o agente Claude (slash command)
+
+Existe um comando de projeto que faz um agente Claude executar estes passos por
+você: [`/distill-pipeline`](../.claude/commands/distill-pipeline.md). Ele usa
+**este README como fonte da verdade**, então o que estiver documentado aqui é o
+que o agente segue.
+
+### Pré-requisitos para usar o agente
+
+1. Abrir **este repositório** no Claude Code (CLI, app ou extensão do VS Code) —
+   o comando só aparece quando o projeto está aberto, pois vive em
+   `.claude/commands/`.
+2. Estar logado no W&B na máquina onde o agente roda (`wandb login`) e,
+   idealmente, ter GPU (o agente verifica e avisa se for CPU).
+
+### Como acionar
+
+Digite, na conversa do Claude Code:
+
+```text
+/distill-pipeline <entidade-wandb> [passo]
+```
+
+- `<entidade-wandb>`: seu usuário/time do W&B. Se omitir, o agente tenta
+  `$WANDB_ENTITY`, depois `wandb status` e, em último caso, pergunta.
+- `[passo]` (opcional, default `all`):
+
+| Você digita | O agente executa |
+|-------------|------------------|
+| `/distill-pipeline meu-usuario` | Pipeline inteiro (Passos 1→4) |
+| `/distill-pipeline meu-usuario finetune` | Só os fine-tunes (1 e 2) |
+| `/distill-pipeline meu-usuario distill` | Só as destilações (3 e 4) |
+| `/distill-pipeline meu-usuario cub` | Caminho CUB (1 e 3) |
+| `/distill-pipeline meu-usuario cars` | Caminho Cars (2 e 4) |
+| `/distill-pipeline meu-usuario 3` | Apenas o Passo 3 |
+
+### O que o agente faz
+
+- Verifica login no W&B e disponibilidade de GPU antes de começar.
+- Roda os comandos dos Passos 1 a 4 **na ordem certa**, respeitando dependências
+  (a destilação CUB só começa depois que o fine-tune CUB registrou `:best`).
+- Garante `--save_dir` e `--wandb_mode online` (sem os dois o modelo não é
+  registrado) e usa a **referência completa** do professor entre projetos.
+- Ao final, reporta uma tabela com os artefatos registrados e as métricas.
+
+### Alternativa em linguagem natural
+
+Sem o slash command, você também pode pedir diretamente, por exemplo:
+
+> "Siga o `RKD/README_pipeline_distilacao.md` e rode o pipeline completo na
+> entidade `meu-usuario`."
+
+O agente segue o mesmo README. O `/distill-pipeline` é só o atalho
+padronizado (já embute as travas de `--save_dir`, modo online e a referência
+cruzada de projeto).
+
 ---
 
 ## Pré-requisitos
