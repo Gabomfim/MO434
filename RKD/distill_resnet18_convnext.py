@@ -10,6 +10,12 @@ four distillation signals:
   * Attention map: activation-attention transfer             (--at_ratio)
   * (+ cross-entropy on true labels, --ce_ratio)
 
+Default loss weights follow the source papers / RepDistiller conventions:
+CE=1.0, KD=0.9 with T=4 (Hinton); RKD distance=25, angle=50 (Park et al. 2019);
+attention=1000 (Zagoruyko & Komodakis). The student is trained from scratch, so
+the schedule is long (300 epochs, 20-epoch linear warmup + cosine, AdamW
+lr 1e-3, weight decay 0.05) -- distillation provides the main supervision.
+
 Attention map placement: student side is the 2nd non-pointwise layer = stage 2
 (28x28); teacher side is ResNet-18 layer2 (28x28). The attention map pools over
 channels, so the 48-vs-128 channel mismatch is irrelevant -- only the 28x28
@@ -85,20 +91,20 @@ def build_parser():
     p.add_argument("--teacher_artifact", default=None,
                    help="W&B ref (e.g. resnet18-cars196:best); xor --teacher_load")
 
-    # distillation ratios
-    p.add_argument("--ce_ratio", type=float, default=1.0)
-    p.add_argument("--kd_ratio", type=float, default=1.0, help="Hinton KD")
+    # distillation ratios (literature-grounded defaults; see module docstring)
+    p.add_argument("--ce_ratio", type=float, default=1.0, help="CE on labels (gamma)")
+    p.add_argument("--kd_ratio", type=float, default=0.9, help="Hinton KD (alpha)")
     p.add_argument("--kd_T", type=float, default=4.0, help="KD temperature")
-    p.add_argument("--dist_ratio", type=float, default=1.0, help="RKD distance")
-    p.add_argument("--angle_ratio", type=float, default=2.0, help="RKD angle")
+    p.add_argument("--dist_ratio", type=float, default=25.0, help="RKD distance (paper)")
+    p.add_argument("--angle_ratio", type=float, default=50.0, help="RKD angle (paper)")
     p.add_argument("--at_ratio", type=float, default=1000.0, help="attention transfer")
     p.add_argument("--label_smoothing", type=float, default=0.1)
 
     # optimization
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight_decay", type=float, default=0.05)
-    p.add_argument("--epochs", type=int, default=120)
-    p.add_argument("--warmup_epochs", type=int, default=5)
+    p.add_argument("--epochs", type=int, default=300)
+    p.add_argument("--warmup_epochs", type=int, default=20)
     p.add_argument("--min_lr", type=float, default=1e-6)
     p.add_argument("--batch", type=int, default=128)
     p.add_argument("--clip_grad", type=float, default=0.0)

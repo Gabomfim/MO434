@@ -17,18 +17,18 @@ SAVE_DIR="distill_runs/cub200"
 TEACHER_ARTIFACT=""                       # e.g. "me/resnet18-finetune/resnet18-cub200:best"
 TEACHER_LOAD="finetune/cub200/best.pth"   # local finetune_resnet18.py checkpoint
 
-# distillation loss weights
+# distillation loss weights (source-paper / RepDistiller conventions)
 CE_RATIO=1.0
-KD_RATIO=1.0
+KD_RATIO=0.9
 KD_T=4.0
-DIST_RATIO=1.0
-ANGLE_RATIO=2.0
+DIST_RATIO=25.0
+ANGLE_RATIO=50.0
 AT_RATIO=1000.0
 
-# optimization
+# optimization (student trained from scratch -> long schedule)
 LR=1e-3
-EPOCHS=120
-WARMUP_EPOCHS=5
+EPOCHS=300
+WARMUP_EPOCHS=20
 BATCH=128
 
 # W&B
