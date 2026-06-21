@@ -306,9 +306,11 @@ def run_experiment(opts):
         normalize=opts.l2normalize == "true",
     ).cuda()
 
-    # Log parameter/gradient flow and model graph for richer W&B debugging.
+    # Loga apenas o grafo do modelo. log="all" gera centenas de paineis de
+    # gradients/parameters que enterram os paineis de metrica (recall/loss) no
+    # workspace do W&B; log=None mantem o workspace limpo.
     if opts.wandb_mode != "disabled":
-        wandb.watch(model, log="all", log_graph=True, log_freq=100)
+        wandb.watch(model, log=None, log_graph=True, log_freq=100)
 
     if opts.load is not None:
         model.load_state_dict(torch.load(opts.load))

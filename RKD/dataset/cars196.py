@@ -46,10 +46,20 @@ class Cars196Metric(ImageFolder):
                 tar.close()
                 os.chdir(cwd)
 
-        if not self._check_integrity() or \
-           not check_integrity(os.path.join(self.root, self.anno_filename), self.anno_md5):
-            raise RuntimeError('Dataset not found or corrupted.' +
-                               ' You can use download=True to download it')
+        anno_path = os.path.join(self.root, self.anno_filename)
+        if download:
+            # Verificacao estrita de md5 so faz sentido para o download oficial.
+            if not self._check_integrity() or \
+               not check_integrity(anno_path, self.anno_md5):
+                raise RuntimeError('Dataset not found or corrupted.' +
+                                   ' You can use download=True to download it')
+        else:
+            # Dados locais (ex: car_ims/cars_annos.mat gerados a partir de outra
+            # fonte): confia na presenca dos arquivos em vez do md5 original.
+            if not os.path.isfile(anno_path) or not os.path.isdir(
+                    os.path.join(self.root, self.base_folder)):
+                raise RuntimeError('Dataset not found at %s.' % self.root +
+                                   ' You can use download=True to download it')
 
         ImageFolder.__init__(self, os.path.join(self.root),
                              transform=transform, target_transform=target_transform, **kwargs)
