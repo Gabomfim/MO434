@@ -1,22 +1,22 @@
 # Relational Knowledge Distillation
 
-Official implementation of [Relational Knowledge Distillation](https://arxiv.org/abs/1904.05068?context=cs.LG), CVPR 2019\
-This repository contains source code of experiments for metric learning.
+Implementação oficial de [Relational Knowledge Distillation](https://arxiv.org/abs/1904.05068?context=cs.LG), CVPR 2019\
+Este repositório contém o código-fonte dos experimentos de *metric learning*.
 
 
-## Quick Start
+## Início Rápido
 
 ```bash
 python run.py --help    
 python run_distill.py --help
 
-# Use config-style scripts (recommended)
+# Use os scripts no estilo de configuração (recomendado)
 bash examples/run_config.sh train
 bash examples/run_config.sh eval
 bash examples/run_distill_config.sh
 
-# W&B logging (optional)
-# Use --wandb_mode disabled to run without logging.
+# Logging no W&B (opcional)
+# Use --wandb_mode disabled para rodar sem logging.
 python run.py --mode train \
               --dataset cub200 \
               --base resnet50 \
@@ -35,11 +35,11 @@ python run_distill.py --dataset cub200 \
                       --wandb_run_name distill-resnet18 \
                       --wandb_mode online
 
-# W&B flags available in both scripts:
+# Flags de W&B disponíveis em ambos os scripts:
 #   --wandb_project, --wandb_entity, --wandb_run_name, --wandb_mode
 
-# Train a teacher embedding network of resnet50 (d=512)
-# using triplet loss (margin=0.2) with distance weighted sampling.
+# Treina uma rede de embedding professora (resnet50, d=512)
+# usando triplet loss (margin=0.2) com distance weighted sampling.
 python run.py --mode train \ 
                --dataset cub200 \
                --base resnet50 \
@@ -48,14 +48,14 @@ python run.py --mode train \
                --embedding_size 512 \
                --save_dir teacher
 
-# Evaluate the teacher embedding network
+# Avalia a rede de embedding professora
 python run.py --mode eval \ 
                --dataset cub200 \
                --base resnet50 \
                --embedding_size 512 \
                --load teacher/best.pth 
 
-# Distill the teacher to student embedding network
+# Destila a professora para a rede de embedding aluna
 python run_distill.py --dataset cub200 \
                       --base resnet18 \
                       --embedding_size 64 \
@@ -67,7 +67,7 @@ python run_distill.py --dataset cub200 \
                       --angle_ratio 2 \
                       --save_dir student
                       
-# Distill the trained model to student network
+# Avalia o modelo aluno treinado
 python run.py --mode eval \ 
                --dataset cub200 \
                --base resnet18 \
@@ -77,76 +77,78 @@ python run.py --mode eval \
             
 ```
 
-## MO434 Extensions — ConvNextMicro, Fine-tuning & Classification Distillation
+## Extensões MO434 — ConvNextMicro, Fine-tuning e Destilação de Classificação
 
-Beyond the original metric-learning code above, this repo adds a compact
-**ConvNextMicro** classifier (<1M params) and a **classification** distillation
-pipeline that turns a fine-tuned **ResNet-18** into ConvNextMicro.
+Além do código original de *metric learning* acima, este repositório adiciona um
+classificador compacto **ConvNextMicro** (<1M de parâmetros) e um pipeline de
+destilação de **classificação** que transforma uma **ResNet-18** ajustada
+(*fine-tuned*) em uma ConvNextMicro.
 
-New scripts / modules:
+Novos scripts / módulos:
 
 * `model/convnext_block.py`: `ConvNextBlock` + `Downsample`.
-* `model/convnext_micro.py`: `ConvNextMicro` classifier (configurable `dims`/`depths`, ~0.67M params).
-* `train_convnext.py`: train ConvNextMicro from scratch (ConvNeXt recipe: AdamW, cosine+warmup, mixup/cutmix, RandAugment, EMA).
-* `finetune_resnet18.py`: fine-tune an ImageNet ResNet-18 on `cars196`/`cub200` (official classification split, top-1/top-5).
-* `distill_resnet18_convnext.py`: distill ResNet-18 → ConvNextMicro (Hinton KD + RKD distance/angle + attention map).
-* `distill_convnext.py`: embedding/metric distillation into ConvNextMicro (disjoint metric split).
-* `wandb_artifacts.py`: fetch a teacher from W&B (`resolve_teacher_checkpoint`) and ship trained models as W&B artifacts (`log_model_artifact`).
+* `model/convnext_micro.py`: classificador `ConvNextMicro` (`dims`/`depths` configuráveis, ~0,67M de parâmetros).
+* `train_convnext.py`: treina a ConvNextMicro do zero (receita ConvNeXt: AdamW, cosine+warmup, mixup/cutmix, RandAugment, EMA).
+* `finetune_resnet18.py`: faz fine-tune de uma ResNet-18 da ImageNet em `cars196`/`cub200` (split oficial de classificação, top-1/top-5).
+* `distill_resnet18_convnext.py`: destila ResNet-18 → ConvNextMicro (Hinton KD + RKD distance/angle + mapa de atenção).
+* `distill_convnext.py`: destilação de embedding/métrica para a ConvNextMicro (split disjunto de *metric learning*).
+* `wandb_artifacts.py`: busca um professor no W&B (`resolve_teacher_checkpoint`) e registra modelos treinados como artefatos do W&B (`log_model_artifact`).
 
-### Classification Distillation (ResNet-18 → ConvNextMicro)
+### Destilação de Classificação (ResNet-18 → ConvNextMicro)
 
-Combines four techniques: **Hinton KD** (logits), **RKD distance**, **RKD angle**
-(pooled embeddings), and an **attention map** at the student's 2nd non-pointwise
-layer (stage 2, 28×28) paired with ResNet-18 `layer2`. Both teacher and student
-are classifiers on the *official* split, so logit KD is valid.
+Combina quatro técnicas: **Hinton KD** (logits), **RKD distance**, **RKD angle**
+(embeddings agrupados) e um **mapa de atenção** na 2ª camada não-pointwise do
+aluno (stage-2, 28×28) pareada com a `layer2` da ResNet-18. Tanto o professor
+quanto o aluno são classificadores no split *oficial*, então o KD de logits é
+válido.
 
 ```bash
-export WANDB_ENTITY="<your-entity>"
+export WANDB_ENTITY="<sua-entidade>"
 
-# 1) Fine-tune the teacher and register it in W&B (--save_dir + online required)
+# 1) Fine-tune do professor e registro no W&B (--save_dir + online obrigatórios)
 python finetune_resnet18.py --dataset cub200 --data ../data --amp \
   --save_dir finetune/cub200 --wandb_project resnet18-finetune \
   --wandb_entity "$WANDB_ENTITY" --wandb_run_name resnet18-cub200
-#   -> artifact: $WANDB_ENTITY/resnet18-finetune/resnet18-cub200:best
+#   -> artefato: $WANDB_ENTITY/resnet18-finetune/resnet18-cub200:best
 
-# 2) Distill the registered teacher into ConvNextMicro (teacher pulled from W&B)
+# 2) Destila o professor registrado para a ConvNextMicro (professor puxado do W&B)
 python distill_resnet18_convnext.py --dataset cub200 --data ../data --amp \
   --teacher_artifact "$WANDB_ENTITY"/resnet18-finetune/resnet18-cub200:best \
   --save_dir distill_runs/cub200 --wandb_project resnet18-to-convnext-distill \
   --wandb_entity "$WANDB_ENTITY" --wandb_run_name distill-cub200
-#   -> artifact: $WANDB_ENTITY/resnet18-to-convnext-distill/convnextmicro-distill-cub200:best
+#   -> artefato: $WANDB_ENTITY/resnet18-to-convnext-distill/convnextmicro-distill-cub200:best
 ```
 
-Swap `cub200` → `cars196` for the Cars pipeline. Per-dataset launchers:
-`examples/distill_convnext_cub.sh` and `examples/distill_convnext_cars.sh`.
+Troque `cub200` → `cars196` para o pipeline do Cars. Launchers por dataset:
+`examples/distill_convnext_cub.sh` e `examples/distill_convnext_cars.sh`.
 
-Tuned defaults (literature-grounded): KD `T=4`, `ce=1.0`/`kd=0.9`; RKD
-`dist=25`, `angle=50`; attention `at=1000`; AdamW `lr=1e-3`, `wd=0.05`, 300
-epochs, 20-epoch warmup. The teacher reference must be **fully qualified**
-(`entity/project/name:alias`) because fine-tune and distill use different W&B
-projects.
+Padrões ajustados (baseados na literatura): KD `T=4`, `ce=1.0`/`kd=0.9`; RKD
+`dist=25`, `angle=50`; atenção `at=1000`; AdamW `lr=1e-3`, `wd=0.05`, 300
+épocas, 20 épocas de warmup. A referência do professor precisa ser
+**totalmente qualificada** (`entidade/projeto/nome:alias`), porque o fine-tune e
+a destilação usam projetos diferentes no W&B.
 
-> **Full step-by-step guide (PT-BR)** — including W&B login/configuration and
-> how to run the whole pipeline with a **Claude agent** (`/distill-pipeline`) —
-> is in [`README_pipeline_distilacao.md`](README_pipeline_distilacao.md).
+> **Guia passo a passo completo (PT-BR)** — incluindo login/configuração do W&B
+> e como rodar o pipeline inteiro com um **agente Claude** (`/distill-pipeline`)
+> — está em [`README_pipeline_distilacao.md`](README_pipeline_distilacao.md).
 
-## Repository Files
+## Arquivos do Repositório
 
-* `run.py`: Main teacher script for metric learning. Supports training and evaluation with `--mode train|eval`, saves checkpoints (`best.pth`, `last.pth`), and logs metrics/artifacts to W&B.
-* `run_distill.py`: Student distillation script. Trains a student from a teacher checkpoint using RKD losses (distance/angle and optional auxiliary losses), saves checkpoints, and logs metrics/artifacts to W&B.
-* `examples/run_config.sh`: Config-style wrapper for `run.py` with centralized variables for dataset/model/training/W&B.
-* `examples/run_distill_config.sh`: Config-style wrapper for `run_distill.py` with centralized variables for teacher/student/distillation/W&B.
-* `examples/`: Example launcher scripts with reproducible hyperparameter presets.
-* `data/` (created at runtime): Dataset download/cache directory used by `--data`.
-* `teacher/` and `student/` (created when `--save_dir` is used): Output directories containing checkpoints and `result.txt`.
+* `run.py`: Script principal do professor para *metric learning*. Suporta treino e avaliação com `--mode train|eval`, salva checkpoints (`best.pth`, `last.pth`) e registra métricas/artefatos no W&B.
+* `run_distill.py`: Script de destilação do aluno. Treina um aluno a partir de um checkpoint do professor usando perdas RKD (distance/angle e perdas auxiliares opcionais), salva checkpoints e registra métricas/artefatos no W&B.
+* `examples/run_config.sh`: Wrapper no estilo de configuração para `run.py`, com variáveis centralizadas de dataset/modelo/treino/W&B.
+* `examples/run_distill_config.sh`: Wrapper no estilo de configuração para `run_distill.py`, com variáveis centralizadas de professor/aluno/destilação/W&B.
+* `examples/`: Scripts de exemplo com presets de hiperparâmetros reprodutíveis.
+* `data/` (criado em tempo de execução): Diretório de download/cache dos datasets usado por `--data`.
+* `teacher/` e `student/` (criados quando `--save_dir` é usado): Diretórios de saída com checkpoints e `result.txt`.
 
-## What To Run First
+## O Que Rodar Primeiro
 
-1. Train or evaluate the teacher model with `run.py` (or `examples/run_config.sh`).
-2. Distill the student with `run_distill.py` (or `examples/run_distill_config.sh`) using the teacher checkpoint (for example `teacher/best.pth`).
-3. Evaluate the student with `run.py --mode eval` using `student/best.pth`.
+1. Treine ou avalie o modelo professor com `run.py` (ou `examples/run_config.sh`).
+2. Destile o aluno com `run_distill.py` (ou `examples/run_distill_config.sh`) usando o checkpoint do professor (por exemplo `teacher/best.pth`).
+3. Avalie o aluno com `run.py --mode eval` usando `student/best.pth`.
 
-Quick command order:
+Ordem rápida de comandos:
 
 ```bash
 bash examples/run_config.sh train
@@ -155,33 +157,33 @@ bash examples/run_distill_config.sh
 python run.py --mode eval --dataset cub200 --base resnet18 --embedding_size 64 --l2normalize false --load student/best.pth
 ```
 
-### W&B Logging in Scripts
+### Logging do W&B nos Scripts
 
-Both `run.py` and `run_distill.py` support:
+Tanto `run.py` quanto `run_distill.py` suportam:
 
-* `--wandb_project`: Project name.
-* `--wandb_entity`: Team/user namespace (optional).
-* `--wandb_run_name`: Explicit run name (optional).
-* `--wandb_mode`: `online`, `offline`, or `disabled`.
+* `--wandb_project`: Nome do projeto.
+* `--wandb_entity`: Namespace de time/usuário (opcional).
+* `--wandb_run_name`: Nome explícito da run (opcional).
+* `--wandb_mode`: `online`, `offline` ou `disabled`.
 
-Distillation-specific extra loss weight:
+Peso de perda extra específico de destilação:
 
-* `--quad_ratio`: weight for 4-sample-set relational distance-sum matching loss.
+* `--quad_ratio`: peso da perda de correspondência de soma de distâncias relacionais em conjuntos de 4 amostras.
 
-When enabled, scripts log:
+Quando habilitado, os scripts registram:
 
-* Hyperparameters/config values.
-* Epoch metrics (loss, recall, learning rate, and distillation loss components).
-* Dataset metadata artifact.
-* Model checkpoint artifacts (`best`, `last`) when `--save_dir` is set.
+* Hiperparâmetros/valores de configuração.
+* Métricas por época (loss, recall, learning rate e componentes da perda de destilação).
+* Artefato de metadados do dataset.
+* Artefatos de checkpoint do modelo (`best`, `last`) quando `--save_dir` é definido.
 
-## W&B Report Template (Distillation Comparison)
+## Template de Relatório W&B (Comparação de Destilação)
 
-Use this template to compare multiple distillation runs in a single report.
+Use este template para comparar várias runs de destilação em um único relatório.
 
-### 1) Organize Runs for Comparison
+### 1) Organize as Runs para Comparação
 
-Use a common project and group for related runs.
+Use um projeto e grupo comuns para runs relacionadas.
 
 ```bash
 python run_distill.py ... \
@@ -190,17 +192,17 @@ python run_distill.py ... \
   --wandb_run_name distill-r18-a2-d1-q0
 ```
 
-Recommended naming pattern:
+Padrão de nomenclatura recomendado:
 
 * `distill-<student>-a<angle_ratio>-d<dist_ratio>-q<quad_ratio>-dark<dark_ratio>-seed<seed>`
 
-### 2) Create Panels in a W&B Report
+### 2) Crie Painéis em um Relatório W&B
 
-Add a run set filter:
+Adicione um filtro de conjunto de runs:
 
 * `group = distillation-experiments`
 
-Add these line charts (x-axis = `epoch`):
+Adicione estes gráficos de linha (eixo x = `epoch`):
 
 * `eval/test_recall1`, `eval/test_recall2`, `eval/test_recall4`, `eval/test_recall8`
 * `eval/train_recall1`, `eval/train_recall2`, `eval/train_recall4`, `eval/train_recall8`
@@ -208,41 +210,41 @@ Add these line charts (x-axis = `epoch`):
 * `train/dist_loss`, `train/angle_loss`, `train/quad_loss`, `train/dark_loss`, `train/triplet_loss`, `train/at_loss`
 * `lr`
 
-Add summary panels:
+Adicione painéis de resumo:
 
 * `best_test_recall_primary`
 * `final_test_recall_primary`
 * `best_test_recall1`, `best_test_recall2`, `best_test_recall4`, `best_test_recall8`
 
-Add comparison tables:
+Adicione tabelas de comparação:
 
-* Run table with columns: `name`, `group`, `config.dist_ratio`, `config.angle_ratio`, `config.quad_ratio`, `config.dark_ratio`, `summary.best_test_recall_primary`, `summary.final_test_recall_primary`.
-* Artifact table for `metrics` artifacts (`distill-metrics-<run_id>`) to download and compare CSV histories.
+* Tabela de runs com colunas: `name`, `group`, `config.dist_ratio`, `config.angle_ratio`, `config.quad_ratio`, `config.dark_ratio`, `summary.best_test_recall_primary`, `summary.final_test_recall_primary`.
+* Tabela de artefatos para artefatos de `metrics` (`distill-metrics-<run_id>`) para baixar e comparar os históricos em CSV.
 
-### 3) Use Logged Artifacts
+### 3) Use os Artefatos Registrados
 
-Each distillation run logs:
+Cada run de destilação registra:
 
-* `metrics/epoch_table` (in-run table with per-epoch metrics).
-* `distill_epoch_metrics.csv` as a W&B `metrics` artifact.
-* `best` and `last` model artifacts.
-* Confusion matrix plots (`eval/test/confusion_matrix`, `best/test/confusion_matrix`) when class/sample limits allow.
+* `metrics/epoch_table` (tabela na run com métricas por época).
+* `distill_epoch_metrics.csv` como artefato `metrics` do W&B.
+* Artefatos de modelo `best` e `last`.
+* Gráficos de matriz de confusão (`eval/test/confusion_matrix`, `best/test/confusion_matrix`) quando os limites de classe/amostra permitem.
 
-### 4) Suggested Comparison Workflow
+### 4) Fluxo de Comparação Sugerido
 
-1. Run a baseline (`quad_ratio=0`) and at least one variant (`quad_ratio>0`).
-2. Keep all other hyperparameters fixed except the one being tested.
-3. Compare `best_test_recall_primary` first, then inspect loss-component curves.
-4. Use confusion matrices to diagnose class-level behavior changes.
-5. Export `distill_epoch_metrics.csv` artifacts for external analysis if needed.
+1. Rode uma baseline (`quad_ratio=0`) e ao menos uma variante (`quad_ratio>0`).
+2. Mantenha todos os outros hiperparâmetros fixos, exceto o que está sendo testado.
+3. Compare `best_test_recall_primary` primeiro, depois inspecione as curvas dos componentes de perda.
+4. Use matrizes de confusão para diagnosticar mudanças de comportamento por classe.
+5. Exporte os artefatos `distill_epoch_metrics.csv` para análise externa, se necessário.
 
-## W&B Report Template (Teacher Comparison)
+## Template de Relatório W&B (Comparação de Professores)
 
-Use this template to compare teacher-only runs (backbone, loss, sampling, and margin choices).
+Use este template para comparar runs apenas de professor (escolhas de backbone, loss, sampling e margin).
 
-### 1) Organize Runs
+### 1) Organize as Runs
 
-Use a dedicated group for teacher experiments:
+Use um grupo dedicado para experimentos de professor:
 
 ```bash
 python run.py --mode train ... \
@@ -251,17 +253,17 @@ python run.py --mode train ... \
   --wandb_run_name teacher-r50-distance-l2triplet
 ```
 
-Recommended naming pattern:
+Padrão de nomenclatura recomendado:
 
 * `teacher-<backbone>-<sample>-<loss>-m<margin>-seed<seed>`
 
-### 2) Create Panels in W&B
+### 2) Crie Painéis no W&B
 
-Add a run set filter:
+Adicione um filtro de conjunto de runs:
 
 * `group = teacher-runs`
 
-Add these line charts (x-axis = `epoch`):
+Adicione estes gráficos de linha (eixo x = `epoch`):
 
 * `train/loss`
 * `eval/train_recall@1`, `eval/train_recall@2`, `eval/train_recall@4`, `eval/train_recall@8`
@@ -269,36 +271,36 @@ Add these line charts (x-axis = `epoch`):
 * `best_recall@1`
 * `lr`
 
-Add summary panels:
+Adicione painéis de resumo:
 
 * `best_recall@1`
 * `final_recall@1`
-* `final_recall@2`, `final_recall@4`, `final_recall@8` (if logged via `--recall`)
+* `final_recall@2`, `final_recall@4`, `final_recall@8` (se registrados via `--recall`)
 
-Add comparison tables:
+Adicione tabelas de comparação:
 
-* Run table with columns: `name`, `config.base`, `config.sample`, `config.loss`, `config.margin`, `summary.best_recall@1`, `summary.final_recall@1`.
-* Artifact table for teacher metric artifacts (`teacher-history-<base>-<seed>`).
+* Tabela de runs com colunas: `name`, `config.base`, `config.sample`, `config.loss`, `config.margin`, `summary.best_recall@1`, `summary.final_recall@1`.
+* Tabela de artefatos para artefatos de métrica do professor (`teacher-history-<base>-<seed>`).
 
-### 3) Use Teacher Artifacts
+### 3) Use os Artefatos do Professor
 
-Each teacher run logs:
+Cada run de professor registra:
 
 * `artifacts/epoch_history_table`.
-* `teacher_epoch_history.csv` as a W&B `metrics` artifact.
-* `best` and `last` model artifacts.
-* Final/eval confusion matrix when class count is within limits.
+* `teacher_epoch_history.csv` como artefato `metrics` do W&B.
+* Artefatos de modelo `best` e `last`.
+* Matriz de confusão final/de avaliação quando a contagem de classes está dentro dos limites.
 
-### 4) Suggested Teacher Workflow
+### 4) Fluxo de Professor Sugerido
 
-1. Choose one baseline backbone and loss/sampler setup.
-2. Change one factor at a time (for example, sampler or margin).
-3. Compare `best_recall@1` first, then inspect recall curves and training loss.
-4. Use confusion matrix differences to inspect class-level retrieval behavior.
-5. Keep top teacher checkpoint as the fixed teacher for distillation sweeps.
+1. Escolha um backbone baseline e uma configuração de loss/sampler.
+2. Mude um fator por vez (por exemplo, sampler ou margin).
+3. Compare `best_recall@1` primeiro, depois inspecione as curvas de recall e a loss de treino.
+4. Use diferenças de matriz de confusão para inspecionar o comportamento de retrieval por classe.
+5. Mantenha o melhor checkpoint de professor como o professor fixo para os sweeps de destilação.
 
 
-##  Dependency
+##  Dependências
 
 * Python 3.6
 * Pytorch 1.0
@@ -307,14 +309,14 @@ Each teacher run logs:
 * scipy (pip install scipy)
 * wandb (pip install wandb)
 
-### Note
-* Hyper-parameters that used for experiments in the paper are specified at scripts in ```examples/```.
-* Heavy teacher network (ResNet50 w/ 512 dimension) requires more than 12GB of GPU memory if batch size is 128.  
-  Thus, you might have to reduce the batch size. (The experiments in the paper were conducted on P40 with 24GB of gpu memory. 
+### Nota
+* Os hiperparâmetros usados nos experimentos do paper estão especificados nos scripts em ```examples/```.
+* A rede professora pesada (ResNet50 com 512 dimensões) requer mais de 12GB de memória de GPU se o batch size for 128.  
+  Portanto, talvez seja necessário reduzir o batch size. (Os experimentos do paper foram conduzidos em uma P40 com 24GB de memória de GPU.
 )
 
-## Citation
-In case of using this source code for your research, please cite our paper.
+## Citação
+Caso utilize este código-fonte em sua pesquisa, por favor cite o paper.
 
 ```
 @inproceedings{park2019relational,
