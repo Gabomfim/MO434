@@ -40,7 +40,7 @@ from metric.utils import recall
 from model import ConvNextMicro
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from wandb_artifacts import resolve_teacher_checkpoint
+from wandb_artifacts import log_model_artifact, resolve_teacher_checkpoint
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -337,8 +337,12 @@ def run_experiment(opts):
 
             if improved and opts.save_dir:
                 os.makedirs(opts.save_dir, exist_ok=True)
-                torch.save(student.state_dict(),
-                           os.path.join(opts.save_dir, "student_best.pth"))
+                best_path = os.path.join(opts.save_dir, "student_best.pth")
+                torch.save(student.state_dict(), best_path)
+                log_model_artifact(
+                    run, best_path, "convnextmicro-distill-%s" % _name(opts.dataset).lower(),
+                    aliases=["best", "epoch-%d" % ep],
+                    metadata={"epoch": ep, "best_recall@%d" % primary_k: best[0]})
 
     run.summary["best_test_recall@%d" % primary_k] = best[0]
     for k, r in zip(opts.recall, best):

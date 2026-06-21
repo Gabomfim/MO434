@@ -46,6 +46,7 @@ from torchvision.transforms import v2
 from tqdm import tqdm
 
 from model import ConvNextMicro
+from wandb_artifacts import log_model_artifact
 
 try:
     import wandb
@@ -256,9 +257,11 @@ def run(opts):
         print(f"resumed from {opts.resume} at epoch {start_epoch}")
 
     use_wandb = wandb is not None and opts.wandb_mode != "disabled"
+    run = None
     if use_wandb:
-        wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
-                   name=opts.wandb_run_name, mode=opts.wandb_mode, config=vars(opts))
+        run = wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
+                         name=opts.wandb_run_name, mode=opts.wandb_mode,
+                         config=vars(opts))
 
     best_acc = 0.0
     for epoch in range(start_epoch, opts.epochs):
@@ -294,6 +297,7 @@ def run(opts):
         train_loss = running / max(1, len(train_loader))
         acc = evaluate(model, val_loader, device, f"[Val {epoch}]")
         ema_acc = evaluate(ema_model, val_loader, device, f"[EMA {epoch}]")
+        improved = max(acc, ema_acc) > best_acc
         best_acc = max(best_acc, acc, ema_acc)
         print(f"[Epoch {epoch}] loss={train_loss:.4f} acc={acc*100:.2f} "
               f"ema_acc={ema_acc*100:.2f} best={best_acc*100:.2f}")
@@ -305,11 +309,16 @@ def run(opts):
 
         if opts.save_dir:
             os.makedirs(opts.save_dir, exist_ok=True)
+            last_path = os.path.join(opts.save_dir, "last.pth")
             torch.save({"model": model.state_dict(), "ema": ema_model.state_dict(),
                         "optimizer": optimizer.state_dict(),
                         "scheduler": scheduler.state_dict(), "epoch": epoch,
-                        "best_acc": best_acc},
-                       os.path.join(opts.save_dir, "last.pth"))
+                        "best_acc": best_acc}, last_path)
+            aliases = ["last", "epoch-%d" % epoch] + (["best"] if improved else [])
+            log_model_artifact(run, last_path, "convnext-micro",
+                               aliases=aliases,
+                               metadata={"epoch": epoch, "acc": acc,
+                                         "ema_acc": ema_acc, "best_acc": best_acc})
 
     print(f"Done. best acc = {best_acc*100:.2f}")
     if use_wandb:

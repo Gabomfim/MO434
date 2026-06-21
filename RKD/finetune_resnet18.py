@@ -24,6 +24,7 @@ import torchvision.transforms as transforms
 import wandb
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from wandb_artifacts import log_model_artifact
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -262,9 +263,17 @@ def run_experiment(opts):
             state = {"model": model.state_dict(), "optimizer": optimizer.state_dict(),
                      "scheduler": scheduler.state_dict(), "epoch": epoch,
                      "best_top1": best_top1}
-            torch.save(state, os.path.join(opts.save_dir, "last.pth"))
+            last_path = os.path.join(opts.save_dir, "last.pth")
+            torch.save(state, last_path)
+            art_name = "resnet18-%s" % opts.dataset
+            log_model_artifact(run, last_path, art_name,
+                               aliases=["last", "epoch-%d" % epoch],
+                               metadata={"epoch": epoch, "top1": top1, "top5": top5})
             if improved:
-                torch.save(state, os.path.join(opts.save_dir, "best.pth"))
+                best_path = os.path.join(opts.save_dir, "best.pth")
+                torch.save(state, best_path)
+                log_model_artifact(run, best_path, art_name, aliases=["best"],
+                                   metadata={"epoch": epoch, "best_top1": best_top1})
 
     run.summary["best_top1"] = best_top1
     print(f"Done. best top1 = {best_top1*100:.2f}")

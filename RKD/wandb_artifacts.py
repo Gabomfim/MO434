@@ -12,6 +12,21 @@ import os
 import wandb
 
 
+def log_model_artifact(run, file_path, name, aliases=None, metadata=None):
+    """Ship a saved checkpoint to W&B as a versioned ``model`` artifact.
+
+    No-op when there is no active run or the run is disabled, so callers can
+    invoke it unconditionally. ``name`` should be stable across a run so W&B
+    versions (v0, v1, ...) accumulate under one artifact; ``aliases`` (e.g.
+    ["best"], ["last", "epoch-12"]) tag specific versions.
+    """
+    if run is None or getattr(run, "disabled", False):
+        return
+    artifact = wandb.Artifact(name=name, type="model", metadata=metadata or {})
+    artifact.add_file(file_path)
+    run.log_artifact(artifact, aliases=aliases or [])
+
+
 def _find_checkpoint(artifact_dir):
     """Locate the .pth checkpoint inside a downloaded artifact directory."""
     for preferred in ("best.pth", "last.pth"):
