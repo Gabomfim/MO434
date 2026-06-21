@@ -21,15 +21,15 @@ TEACHER_LOAD="finetune/cub200/best.pth"   # local finetune_resnet18.py checkpoin
 CE_RATIO=1.0
 KD_RATIO=1.0
 KD_T=4.0
-DIST_RATIO=25.0
-ANGLE_RATIO=50.0
+DIST_RATIO=1.0
+ANGLE_RATIO=2.0
 AT_RATIO=1000.0
 
 # optimization
 LR=1e-3
 EPOCHS=120
 WARMUP_EPOCHS=5
-BATCH=64
+BATCH=128
 
 # W&B
 WANDB_PROJECT="resnet18-to-convnext-distill"
