@@ -5,7 +5,7 @@ from torchvision.datasets import ImageFolder
 from torchvision.datasets.utils import download_url, check_integrity
 
 
-__all__ = ['CUB2011Metric']
+__all__ = ['CUB2011Metric', 'CUB2011Classification']
 
 
 class CUB2011(ImageFolder):
@@ -52,6 +52,8 @@ class CUB2011(ImageFolder):
 
 
 class CUB2011Classification(CUB2011):
+    num_classes = 200
+
     def __init__(self, root, train=False, transform=None, target_transform=None, download=False):
         CUB2011.__init__(self, root, transform=transform, target_transform=target_transform, download=download)
 

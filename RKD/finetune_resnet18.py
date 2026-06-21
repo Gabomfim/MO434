@@ -1,12 +1,15 @@
-"""Fine-tune an ImageNet-1k pre-trained ResNet-18 on Stanford Cars-196.
+"""Fine-tune an ImageNet-1k pre-trained ResNet-18 on Cars-196 or CUB-200.
 
-Standard classification fine-tuning (NOT the metric-learning split): uses
-Cars196Classification, which keeps all 196 classes and the dataset's official
-train/test split, and is evaluated with top-1 / top-5 accuracy.
+Standard classification fine-tuning (NOT the metric-learning split): uses the
+*Classification* dataset variants, which keep all classes and the dataset's
+official train/test split, and is evaluated with top-1 / top-5 accuracy.
 
-The ImageNet head is replaced by a fresh 196-way linear layer. By default the
-backbone and the new head use different learning rates (--head_lr_mult), since
-the head trains from scratch while the backbone only adapts.
+The ImageNet head is replaced by a fresh N-way linear layer (N inferred from
+the dataset). By default the backbone and the new head use different learning
+rates (--head_lr_mult), since the head trains from scratch while the backbone
+only adapts.
+
+Select the dataset with --dataset {cars196,cub200}.
 """
 
 import argparse
@@ -25,12 +28,23 @@ from tqdm import tqdm
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
+# dataset key -> (Classification dataset class, num_classes, marker file under --data
+# that signals the dataset is already downloaded)
+DATASETS = {
+    "cars196": (dataset.Cars196Classification, 196,
+                os.path.join("Cars196", "cars_annos.mat")),
+    "cub200": (dataset.CUB2011Classification, 200,
+               os.path.join("CUB_200_2011", "images.txt")),
+}
+
 
 def build_parser():
-    p = argparse.ArgumentParser(description="Fine-tune ResNet-18 on Cars-196")
+    p = argparse.ArgumentParser(description="Fine-tune ResNet-18 on Cars-196 / CUB-200")
 
+    p.add_argument("--dataset", choices=sorted(DATASETS), default="cars196")
     p.add_argument("--data", default="data")
-    p.add_argument("--num_classes", type=int, default=196)
+    p.add_argument("--num_classes", type=int, default=None,
+                   help="override; inferred from --dataset when omitted")
     p.add_argument("--workers", type=int, default=8)
 
     # optimization
@@ -56,10 +70,11 @@ def build_parser():
     p.add_argument("--resume", default=None)
 
     # wandb
-    p.add_argument("--wandb_project", default="cars196-finetune")
+    p.add_argument("--wandb_project", default="resnet18-finetune")
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_run_name", default=None)
-    p.add_argument("--wandb_group", default="resnet18-cars196")
+    p.add_argument("--wandb_group", default=None,
+                   help="defaults to 'resnet18-<dataset>'")
     p.add_argument("--wandb_mode", choices=["online", "offline", "disabled"],
                    default="online")
     p.add_argument("--wandb_tags", nargs="*", default=None)
@@ -154,6 +169,12 @@ def run_experiment(opts):
     torch.cuda.manual_seed_all(opts.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    dataset_cls, default_classes, marker = DATASETS[opts.dataset]
+    if opts.num_classes is None:
+        opts.num_classes = default_classes
+    if opts.wandb_group is None:
+        opts.wandb_group = "resnet18-%s" % opts.dataset
+
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     train_tf = transforms.Compose([
         transforms.RandomResizedCrop(224),
@@ -166,13 +187,12 @@ def run_experiment(opts):
         transforms.ToTensor(),
         normalize])
 
-    cars_root = os.path.join(os.path.abspath(opts.data), "Cars196")
-    download = not os.path.exists(os.path.join(cars_root, "cars_annos.mat"))
-    train_set = dataset.Cars196Classification(opts.data, train=True,
-                                              transform=train_tf, download=download)
-    test_set = dataset.Cars196Classification(opts.data, train=False,
-                                             transform=test_tf, download=False)
-    print(f"train={len(train_set)} test={len(test_set)} classes={opts.num_classes}")
+    download = not os.path.exists(os.path.join(os.path.abspath(opts.data), marker))
+    train_set = dataset_cls(opts.data, train=True, transform=train_tf,
+                            download=download)
+    test_set = dataset_cls(opts.data, train=False, transform=test_tf, download=False)
+    print(f"dataset={opts.dataset} train={len(train_set)} test={len(test_set)} "
+          f"classes={opts.num_classes}")
 
     train_loader = DataLoader(train_set, batch_size=opts.batch, shuffle=True,
                               num_workers=opts.workers, pin_memory=True, drop_last=True)
@@ -185,7 +205,7 @@ def run_experiment(opts):
     scheduler = build_scheduler(optimizer, opts, len(train_loader))
     scaler = torch.cuda.amp.GradScaler(enabled=opts.amp and device == "cuda")
 
-    tags = ["finetune", "resnet18", "cars196"]
+    tags = ["finetune", "resnet18", opts.dataset]
     if opts.wandb_tags:
         tags.extend(opts.wandb_tags)
     run = wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
