@@ -266,14 +266,19 @@ def run_experiment(opts):
             last_path = os.path.join(opts.save_dir, "last.pth")
             torch.save(state, last_path)
             art_name = "resnet18-%s" % opts.dataset
-            log_model_artifact(run, last_path, art_name,
-                               aliases=["last", "epoch-%d" % epoch],
-                               metadata={"epoch": epoch, "top1": top1, "top5": top5})
+            # Salva o checkpoint local toda epoca (para --resume), mas so envia ao
+            # W&B quando melhora (best) ou na ultima epoca (last) -- sem alias
+            # epoch-N e com TTL -- para nao estourar o storage do W&B.
             if improved:
                 best_path = os.path.join(opts.save_dir, "best.pth")
                 torch.save(state, best_path)
                 log_model_artifact(run, best_path, art_name, aliases=["best"],
+                                   ttl_days=30,
                                    metadata={"epoch": epoch, "best_top1": best_top1})
+            if epoch == opts.epochs - 1:
+                log_model_artifact(run, last_path, art_name, aliases=["last"],
+                                   ttl_days=30,
+                                   metadata={"epoch": epoch, "top1": top1, "top5": top5})
 
     run.summary["best_top1"] = best_top1
     print(f"Done. best top1 = {best_top1*100:.2f}")

@@ -311,11 +311,17 @@ def run_experiment(opts):
             os.makedirs(opts.save_dir, exist_ok=True)
             last_path = os.path.join(opts.save_dir, "student_last.pth")
             torch.save(student.state_dict(), last_path)
-            aliases = ["last", "epoch-%d" % epoch] + (["best"] if improved else [])
-            log_model_artifact(run, last_path, "convnextmicro-distill-%s" % opts.dataset,
-                               aliases=aliases,
-                               metadata={"epoch": epoch, "top1": top1, "top5": top5,
-                                         "best_top1": best_top1})
+            # Salva o checkpoint local toda epoca, mas so envia ao W&B quando
+            # melhora (best) ou na ultima epoca (last) -- sem alias epoch-N e com
+            # TTL -- para nao acumular uma versao por epoca e estourar o storage.
+            is_final = epoch == opts.epochs
+            if improved or is_final:
+                aliases = (["best"] if improved else []) + (["last"] if is_final else [])
+                log_model_artifact(run, last_path,
+                                   "convnextmicro-distill-%s" % opts.dataset,
+                                   aliases=aliases, ttl_days=30,
+                                   metadata={"epoch": epoch, "top1": top1, "top5": top5,
+                                             "best_top1": best_top1})
 
     run.summary["best_top1"] = best_top1
     run.summary["teacher_top1"] = t_top1
