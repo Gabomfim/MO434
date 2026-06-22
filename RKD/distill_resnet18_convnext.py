@@ -180,7 +180,8 @@ def evaluate(net, loader, device, desc):
     top1 = top5 = total = 0
     for images, targets in tqdm(loader, ncols=80, desc=desc):
         images, targets = images.to(device), targets.to(device)
-        logits = net.forward_features(images)["logits"]
+        out = net.forward_features(images)
+        logits = out["logits"] if "logits" in out else net.fc(out["embedding"])
         _, pred5 = logits.topk(5, dim=1)
         correct = pred5 == targets.unsqueeze(1)
         top1 += correct[:, 0].sum().item()
