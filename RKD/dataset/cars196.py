@@ -120,6 +120,16 @@ class Cars196Classification(Dataset):
         self.target_transform = target_transform
         self.loader = default_loader
 
+        # Split OFICIAL do Cars-196 (8144/8041) materializado como ImageFolder em
+        # <root>/Cars196/official/{train,test}/<label 000..195>/. Preferido quando
+        # presente, pois o cars_annos.mat local pode estar sem a flag test oficial
+        # (todas as imagens marcadas como treino). Ver prepare_cars196_official.py.
+        official_split = os.path.join(self.root, "official",
+                                      "train" if train else "test")
+        if os.path.isdir(official_split):
+            self.samples = ImageFolder(official_split).samples
+            return
+
         if download:
             download_url(self.img_url, self.root, self.img_filename, self.img_md5)
             download_url(self.anno_url, self.root, self.anno_filename, self.anno_md5)
