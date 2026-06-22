@@ -131,10 +131,21 @@ class Cars196Classification(Dataset):
                 tar.close()
                 os.chdir(cwd)
 
-        if not self._check_integrity() or not check_integrity(
-                os.path.join(self.root, self.anno_filename), self.anno_md5):
-            raise RuntimeError(
-                "Dataset not found or corrupted. Use download=True to download it")
+        anno_path = os.path.join(self.root, self.anno_filename)
+        if download:
+            # Verificacao estrita de md5 so faz sentido para o download oficial.
+            if not self._check_integrity() or \
+               not check_integrity(anno_path, self.anno_md5):
+                raise RuntimeError(
+                    "Dataset not found or corrupted. Use download=True to download it")
+        else:
+            # Dados locais (ex: car_ims/cars_annos.mat de outra fonte): confia na
+            # presenca dos arquivos em vez do md5 original.
+            if not os.path.isfile(anno_path) or not os.path.isdir(
+                    os.path.join(self.root, self.base_folder)):
+                raise RuntimeError(
+                    "Dataset not found at %s. Use download=True to download it"
+                    % self.root)
 
         annotations = io.loadmat(
             os.path.join(self.root, self.anno_filename))["annotations"][0]
