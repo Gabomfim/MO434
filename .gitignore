@@ -267,3 +267,15 @@ Thumbs.db
 # Local experiment tooling artifacts
 wandb/
 .git_broken_backup_*/
+
+# Pastas de resultado de treino (save_dirs do pipeline RKD) -- nunca versionar.
+# Os checkpoints (*.pth) ja sao ignorados, mas result.txt/historicos vazariam.
+RKD/cars196_*/
+RKD/cub200_*/
+RKD/stanford_*/
+RKD/finetune/
+RKD/distill_runs/
+RKD/artifacts/
+
+# Symlink local de dados na raiz (aponta p/ caminho absoluto da maquina)
+/data
