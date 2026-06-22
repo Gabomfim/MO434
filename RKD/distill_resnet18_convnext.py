@@ -222,10 +222,16 @@ def run_experiment(opts):
     print(f"dataset={opts.dataset} train={len(train_set)} test={len(test_set)} "
           f"classes={opts.num_classes}")
 
+    # persistent_workers evita recriar os workers a cada epoca (os loaders sao
+    # reusados no loop de treino/eval). Sem isso, em runs longos (300 epocas) os
+    # ciclos de teardown dos workers acumulam e deadlockam ao entrar no eval.
+    persistent = opts.workers > 0
     train_loader = DataLoader(train_set, batch_size=opts.batch, shuffle=True,
-                              num_workers=opts.workers, pin_memory=True, drop_last=True)
+                              num_workers=opts.workers, pin_memory=True, drop_last=True,
+                              persistent_workers=persistent)
     test_loader = DataLoader(test_set, batch_size=opts.batch, shuffle=False,
-                             num_workers=opts.workers, pin_memory=True)
+                             num_workers=opts.workers, pin_memory=True,
+                             persistent_workers=persistent)
 
     tags = ["distillation", "resnet18", "convnextmicro", opts.dataset]
     if opts.wandb_tags:
