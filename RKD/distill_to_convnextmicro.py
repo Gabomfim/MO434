@@ -1,4 +1,7 @@
-"""Distill a fine-tuned ResNet-18 (teacher) into ConvNextMicro (student).
+"""Distill a fine-tuned classifier (teacher) into ConvNextMicro (student).
+
+Teacher backbone is chosen with --teacher_arch {resnet18, convnext_tiny} and
+loaded from a finetune_classifier.py checkpoint / W&B artifact.
 
 Classification distillation on the *official* split (all classes), so teacher
 and student share the label space and Hinton KD on logits is valid. Combines
@@ -17,13 +20,11 @@ the schedule is long (300 epochs, 20-epoch linear warmup + cosine, AdamW
 lr 1e-3, weight decay 0.05) -- distillation provides the main supervision.
 
 Attention map placement: student side is the 2nd non-pointwise layer = stage 2
-(28x28); teacher side is ResNet-18 layer2 (28x28). The attention map pools over
-channels, so the 48-vs-128 channel mismatch is irrelevant -- only the 28x28
-spatial size must match (it does).
+(28x28); teacher side is its own stage-2 map (ResNet-18 layer2 or ConvNeXt-Tiny
+features[:4]), also 28x28. The attention map pools over channels, so the channel
+mismatch is irrelevant -- only the 28x28 spatial size must match (it does).
 
-Teacher is a finetune_resnet18.py checkpoint / W&B artifact (state under "model").
-Use --dataset {cars196,cub200}; the per-dataset launchers are
-examples/distill_convnext_cars.sh and examples/distill_convnext_cub.sh.
+Use --dataset {cars196,cub200}; per-dataset launchers are in examples/.
 """
 
 import argparse
@@ -34,7 +35,6 @@ import dataset
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision
 import torchvision.transforms as transforms
 import wandb
 from metric.loss import AttentionTransfer, RKdAngle, RkdDistance
@@ -45,6 +45,7 @@ from classification_split import (
     evaluate_splits,
     log_dict,
 )
+from teacher_models import ARCHS, load_teacher as _load_teacher_model
 from wandb_artifacts import log_model_artifact, resolve_teacher_checkpoint
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -58,26 +59,8 @@ DATASETS = {
 }
 
 
-class ResNet18Teacher(nn.Module):
-    """Fine-tuned ResNet-18 exposing logits, pooled embedding and layer2 map."""
-
-    def __init__(self, num_classes):
-        super().__init__()
-        self.m = torchvision.models.resnet18(weights=None)
-        self.m.fc = nn.Linear(self.m.fc.in_features, num_classes)
-
-    def forward_features(self, x):
-        m = self.m
-        x = m.maxpool(m.relu(m.bn1(m.conv1(x))))
-        l1 = m.layer1(x)
-        l2 = m.layer2(l1)          # 28x28 -> AT attachment (matches student stage2)
-        l4 = m.layer4(m.layer3(l2))
-        emb = torch.flatten(m.avgpool(l4), 1)
-        return {"stage2": l2, "embedding": emb, "logits": m.fc(emb)}
-
-
 def build_parser():
-    p = argparse.ArgumentParser(description="Distill ResNet-18 -> ConvNextMicro")
+    p = argparse.ArgumentParser(description="Distill classifier -> ConvNextMicro")
 
     p.add_argument("--dataset", choices=sorted(DATASETS), default="cars196")
     p.add_argument("--data", default="data")
@@ -91,6 +74,7 @@ def build_parser():
     p.add_argument("--drop_path", type=float, default=0.1)
 
     # teacher
+    p.add_argument("--teacher_arch", choices=sorted(ARCHS), default="resnet18")
     p.add_argument("--teacher_load", default=None)
     p.add_argument("--teacher_artifact", default=None,
                    help="W&B ref (e.g. resnet18-cars196:best); xor --teacher_load")
@@ -121,7 +105,7 @@ def build_parser():
     p.add_argument("--save_dir", default=None)
 
     # wandb
-    p.add_argument("--wandb_project", default="resnet18-to-convnext-distill")
+    p.add_argument("--wandb_project", default="convnextmicro-distill")
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_run_name", default=None)
     p.add_argument("--wandb_group", default=None, help="defaults to distill-<dataset>")
@@ -158,12 +142,9 @@ def hinton_kd(student_logits, teacher_logits, T):
 def load_teacher(opts, run, device):
     ckpt = resolve_teacher_checkpoint(teacher_load=opts.teacher_load,
                                       teacher_artifact=opts.teacher_artifact, run=run)
-    blob = torch.load(ckpt, map_location=device)
-    state = blob["model"] if isinstance(blob, dict) and "model" in blob else blob
-    teacher = ResNet18Teacher(opts.num_classes).to(device)
-    teacher.m.load_state_dict(state)
+    teacher = _load_teacher_model(opts.teacher_arch, opts.num_classes, ckpt, device)
     teacher.eval()
-    print(f"Loaded teacher from {ckpt}")
+    print(f"Loaded {opts.teacher_arch} teacher from {ckpt}")
     return teacher
 
 
@@ -198,7 +179,7 @@ def run_experiment(opts):
     if opts.num_classes is None:
         opts.num_classes = default_classes
     if opts.wandb_group is None:
-        opts.wandb_group = "distill-%s" % opts.dataset
+        opts.wandb_group = "distill-%s-%s" % (opts.teacher_arch, opts.dataset)
 
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     train_tf = transforms.Compose([
@@ -216,7 +197,7 @@ def run_experiment(opts):
     print(f"dataset={opts.dataset} train={sizes['train']} val={sizes['val']} "
           f"test={sizes['test']} classes={opts.num_classes}")
 
-    tags = ["distillation", "resnet18", "convnextmicro", opts.dataset]
+    tags = ["distillation", opts.teacher_arch, "convnextmicro", opts.dataset]
     if opts.wandb_tags:
         tags.extend(opts.wandb_tags)
     run = wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
@@ -249,7 +230,7 @@ def run_experiment(opts):
     def teacher_logits(images):
         return teacher.forward_features(images)["logits"]
 
-    art_name = "convnextmicro-distill-%s" % opts.dataset
+    art_name = "convnextmicro-distill-%s-%s" % (opts.teacher_arch, opts.dataset)
 
     # Professor avaliado nos MESMOS splits/métricas, como referência.
     teacher.eval()

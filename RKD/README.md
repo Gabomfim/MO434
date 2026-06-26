@@ -81,45 +81,50 @@ python run.py --mode eval \
 
 Além do código original de *metric learning* acima, este repositório adiciona um
 classificador compacto **ConvNextMicro** (<1M de parâmetros) e um pipeline de
-destilação de **classificação** que transforma uma **ResNet-18** ajustada
-(*fine-tuned*) em uma ConvNextMicro.
+destilação de **classificação** que transforma um professor ajustado
+(*fine-tuned*) — **ResNet-18** ou **ConvNeXt-Tiny** — em uma ConvNextMicro.
 
 Novos scripts / módulos:
 
 * `model/convnext_block.py`: `ConvNextBlock` + `Downsample`.
 * `model/convnext_micro.py`: classificador `ConvNextMicro` (`dims`/`depths` configuráveis, ~0,67M de parâmetros).
 * `train_convnext.py`: treina a ConvNextMicro do zero (receita ConvNeXt: AdamW, cosine+warmup, mixup/cutmix, RandAugment, EMA).
-* `finetune_resnet18.py`: faz fine-tune de uma ResNet-18 da ImageNet em `cars196`/`cub200` (split oficial de classificação, top-1/top-5).
-* `distill_resnet18_convnext.py`: destila ResNet-18 → ConvNextMicro (Hinton KD + RKD distance/angle + mapa de atenção).
+* `teacher_models.py`: wrappers de professor (`resnet18`, `convnext_tiny`) com interface uniforme (`forward_features` → stage2/embedding/logits) + factory.
+* `finetune_classifier.py`: fine-tune de um professor da ImageNet (`--arch resnet18|convnext_tiny`) em `cars196`/`cub200` (split oficial, top-1/top-5).
+* `distill_to_convnextmicro.py`: destila um professor (`--teacher_arch ...`) → ConvNextMicro (Hinton KD + RKD distance/angle + mapa de atenção).
+* `classification_split.py`: política comum (val estratificado, mesmas métricas em train/val/test, seleção pelo melhor val).
 * `distill_convnext.py`: destilação de embedding/métrica para a ConvNextMicro (split disjunto de *metric learning*).
 * `wandb_artifacts.py`: busca um professor no W&B (`resolve_teacher_checkpoint`) e registra modelos treinados como artefatos do W&B (`log_model_artifact`).
 
-### Destilação de Classificação (ResNet-18 → ConvNextMicro)
+### Destilação de Classificação (professor → ConvNextMicro)
 
 Combina quatro técnicas: **Hinton KD** (logits), **RKD distance**, **RKD angle**
 (embeddings agrupados) e um **mapa de atenção** na 2ª camada não-pointwise do
-aluno (stage-2, 28×28) pareada com a `layer2` da ResNet-18. Tanto o professor
-quanto o aluno são classificadores no split *oficial*, então o KD de logits é
-válido.
+aluno (stage-2, 28×28) pareada com o stage-2 do professor (também 28×28). Tanto
+o professor quanto o aluno são classificadores no split *oficial*, então o KD de
+logits é válido. O professor é `resnet18` ou `convnext_tiny` (`--arch` /
+`--teacher_arch`).
 
 ```bash
 export WANDB_ENTITY="<sua-entidade>"
+ARCH=resnet18   # ou convnext_tiny
 
 # 1) Fine-tune do professor e registro no W&B (--save_dir + online obrigatórios)
-python finetune_resnet18.py --dataset cub200 --data ../data --amp \
-  --save_dir finetune/cub200 --wandb_project resnet18-finetune \
-  --wandb_entity "$WANDB_ENTITY" --wandb_run_name resnet18-cub200
-#   -> artefato: $WANDB_ENTITY/resnet18-finetune/resnet18-cub200:best
+python finetune_classifier.py --arch "$ARCH" --dataset cub200 --data ../data --amp \
+  --save_dir "finetune/$ARCH-cub200" --wandb_project classifier-finetune \
+  --wandb_entity "$WANDB_ENTITY" --wandb_run_name "$ARCH-cub200"
+#   -> artefato: $WANDB_ENTITY/classifier-finetune/$ARCH-cub200:best
 
 # 2) Destila o professor registrado para a ConvNextMicro (professor puxado do W&B)
-python distill_resnet18_convnext.py --dataset cub200 --data ../data --amp \
-  --teacher_artifact "$WANDB_ENTITY"/resnet18-finetune/resnet18-cub200:best \
-  --save_dir distill_runs/cub200 --wandb_project resnet18-to-convnext-distill \
-  --wandb_entity "$WANDB_ENTITY" --wandb_run_name distill-cub200
-#   -> artefato: $WANDB_ENTITY/resnet18-to-convnext-distill/convnextmicro-distill-cub200:best
+python distill_to_convnextmicro.py --teacher_arch "$ARCH" --dataset cub200 --data ../data --amp \
+  --teacher_artifact "$WANDB_ENTITY/classifier-finetune/$ARCH-cub200:best" \
+  --save_dir "distill_runs/$ARCH-cub200" --wandb_project convnextmicro-distill \
+  --wandb_entity "$WANDB_ENTITY" --wandb_run_name "distill-$ARCH-cub200"
+#   -> artefato: $WANDB_ENTITY/convnextmicro-distill/convnextmicro-distill-$ARCH-cub200:best
 ```
 
-Troque `cub200` → `cars196` para o pipeline do Cars. Launchers por dataset:
+Troque `cub200` → `cars196` para o pipeline do Cars. Launchers por dataset
+(parametrizados por `TEACHER_ARCH`):
 `examples/distill_convnext_cub.sh` e `examples/distill_convnext_cars.sh`.
 
 Padrões ajustados (baseados na literatura): KD `T=4`, `ce=1.0`/`kd=0.9`; RKD

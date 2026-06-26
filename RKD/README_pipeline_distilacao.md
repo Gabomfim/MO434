@@ -1,16 +1,19 @@
-# Pipeline de Fine-tuning e Destilação (ResNet-18 → ConvNextMicro)
+# Pipeline de Fine-tuning e Destilação (professor → ConvNextMicro)
 
 Este guia descreve o fluxo completo, registrando **todos** os modelos no
-Weights & Biases (W&B):
+Weights & Biases (W&B). O **professor** pode ser `resnet18` **ou**
+`convnext_tiny` (ambos pré-treinados na ImageNet-1k) — basta trocar `--arch` /
+`--teacher_arch`. Os exemplos abaixo usam `resnet18`; para a ConvNeXt-Tiny veja
+a seção "Trocar o professor para ConvNeXt-Tiny".
 
-1. Fine-tune da **ResNet-18** (pré-treinada na ImageNet-1k) no **CUB-200** → registra no W&B
-2. Fine-tune da **ResNet-18** no **Cars-196** → registra no W&B
-3. Destilação da ResNet-18 (professor, CUB) → **ConvNextMicro** (aluno) para classificação CUB → registra no W&B
-4. Destilação da ResNet-18 (professor, Cars) → **ConvNextMicro** (aluno) para classificação Cars → registra no W&B
+1. Fine-tune do **professor** no **CUB-200** → registra no W&B
+2. Fine-tune do **professor** no **Cars-196** → registra no W&B
+3. Destilação do professor (CUB) → **ConvNextMicro** (aluno) para classificação CUB → registra no W&B
+4. Destilação do professor (Cars) → **ConvNextMicro** (aluno) para classificação Cars → registra no W&B
 
 A destilação combina quatro técnicas: **Hinton KD** (logits), **RKD distance**,
-**RKD angle** (embeddings) e **mapa de atenção** (stage-2 do aluno ↔ layer2 da
-ResNet-18).
+**RKD angle** (embeddings) e **mapa de atenção** (stage-2 do aluno ↔ stage-2 do
+professor, 28×28).
 
 Há **dois caminhos** para rodar este pipeline:
 
@@ -145,8 +148,8 @@ cria o projeto na primeira run:
 
 | Etapa | Projeto (`--wandb_project`) |
 |-------|------------------------------|
-| Fine-tune (Passos 1 e 2) | `resnet18-finetune` |
-| Destilação (Passos 3 e 4) | `resnet18-to-convnext-distill` |
+| Fine-tune (Passos 1 e 2) | `classifier-finetune` |
+| Destilação (Passos 3 e 4) | `convnextmicro-distill` |
 
 ### 4. Formas de configurar entidade/projeto
 
@@ -156,7 +159,7 @@ cria o projeto na primeira run:
 
   ```bash
   export WANDB_ENTITY="<sua-entidade>"
-  export WANDB_PROJECT="resnet18-finetune"   # opcional; a flag tem prioridade
+  export WANDB_PROJECT="classifier-finetune"   # opcional; a flag tem prioridade
   ```
 
   > As flags dos scripts têm prioridade sobre as variáveis de ambiente.
@@ -177,39 +180,41 @@ cria o projeto na primeira run:
 ## Passo 1 — Fine-tune da ResNet-18 no CUB-200 (e registro no W&B)
 
 ```bash
-python finetune_resnet18.py \
+python finetune_classifier.py \
+  --arch resnet18 \
   --dataset cub200 \
   --data ../data \
   --epochs 60 --batch 64 --amp \
-  --save_dir finetune/cub200 \
-  --wandb_project resnet18-finetune \
+  --save_dir finetune/resnet18-cub200 \
+  --wandb_project classifier-finetune \
   --wandb_entity "$WANDB_ENTITY" \
   --wandb_run_name resnet18-cub200
 ```
 
-- **Projeto W&B:** `resnet18-finetune`
-- **Artefato registrado:** `resnet18-cub200` com os aliases `best` (melhor top-1)
+- **Projeto W&B:** `classifier-finetune`
+- **Artefato registrado:** `resnet18-cub200` com os aliases `best` (melhor top-1 de validação)
   e `last` / `epoch-N`.
-- **Referência para usar depois:** `"$WANDB_ENTITY"/resnet18-finetune/resnet18-cub200:best`
+- **Referência para usar depois:** `"$WANDB_ENTITY"/classifier-finetune/resnet18-cub200:best`
 
 ---
 
 ## Passo 2 — Fine-tune da ResNet-18 no Cars-196 (e registro no W&B)
 
 ```bash
-python finetune_resnet18.py \
+python finetune_classifier.py \
+  --arch resnet18 \
   --dataset cars196 \
   --data ../data \
   --epochs 60 --batch 64 --amp \
-  --save_dir finetune/cars196 \
-  --wandb_project resnet18-finetune \
+  --save_dir finetune/resnet18-cars196 \
+  --wandb_project classifier-finetune \
   --wandb_entity "$WANDB_ENTITY" \
   --wandb_run_name resnet18-cars196
 ```
 
-- **Projeto W&B:** `resnet18-finetune`
+- **Projeto W&B:** `classifier-finetune`
 - **Artefato registrado:** `resnet18-cars196` (aliases `best`, `last`, `epoch-N`).
-- **Referência para usar depois:** `"$WANDB_ENTITY"/resnet18-finetune/resnet18-cars196:best`
+- **Referência para usar depois:** `"$WANDB_ENTITY"/classifier-finetune/resnet18-cars196:best`
 
 ---
 
@@ -219,25 +224,26 @@ Usa o professor registrado no Passo 1 **direto do W&B** (não precisa de arquivo
 local).
 
 ```bash
-python distill_resnet18_convnext.py \
+python distill_to_convnextmicro.py \
+  --teacher_arch resnet18 \
   --dataset cub200 \
   --data ../data \
-  --teacher_artifact "$WANDB_ENTITY"/resnet18-finetune/resnet18-cub200:best \
+  --teacher_artifact "$WANDB_ENTITY"/classifier-finetune/resnet18-cub200:best \
   --amp \
-  --save_dir distill_runs/cub200 \
-  --wandb_project resnet18-to-convnext-distill \
+  --save_dir distill_runs/resnet18-cub200 \
+  --wandb_project convnextmicro-distill \
   --wandb_entity "$WANDB_ENTITY" \
-  --wandb_run_name distill-cub200
+  --wandb_run_name distill-resnet18-cub200
 ```
 
-- **Projeto W&B:** `resnet18-to-convnext-distill`
-- **Aluno registrado:** `convnextmicro-distill-cub200` (aliases `best`, `last`, `epoch-N`).
+- **Projeto W&B:** `convnextmicro-distill`
+- **Aluno registrado:** `convnextmicro-distill-resnet18-cub200` (aliases `best`, `last`, `epoch-N`).
 - O professor é puxado do W&B e fica registrado na *lineage* da run de destilação.
 
 > ⚠️ **Importante:** a referência do professor precisa ser **completa**
 > (`entidade/projeto/nome:alias`), porque o fine-tune foi registrado no projeto
-> `resnet18-finetune`, enquanto a destilação roda no projeto
-> `resnet18-to-convnext-distill`. A forma curta `resnet18-cub200:best` só
+> `classifier-finetune`, enquanto a destilação roda no projeto
+> `convnextmicro-distill`. A forma curta `resnet18-cub200:best` só
 > funcionaria se ambos estivessem no mesmo projeto.
 
 ---
@@ -245,26 +251,57 @@ python distill_resnet18_convnext.py \
 ## Passo 4 — Destilar a ResNet-18 (Cars) para a ConvNextMicro (classificação Cars)
 
 ```bash
-python distill_resnet18_convnext.py \
+python distill_to_convnextmicro.py \
+  --teacher_arch resnet18 \
   --dataset cars196 \
   --data ../data \
-  --teacher_artifact "$WANDB_ENTITY"/resnet18-finetune/resnet18-cars196:best \
+  --teacher_artifact "$WANDB_ENTITY"/classifier-finetune/resnet18-cars196:best \
   --amp \
-  --save_dir distill_runs/cars196 \
-  --wandb_project resnet18-to-convnext-distill \
+  --save_dir distill_runs/resnet18-cars196 \
+  --wandb_project convnextmicro-distill \
   --wandb_entity "$WANDB_ENTITY" \
-  --wandb_run_name distill-cars196
+  --wandb_run_name distill-resnet18-cars196
 ```
 
-- **Projeto W&B:** `resnet18-to-convnext-distill`
-- **Aluno registrado:** `convnextmicro-distill-cars196` (aliases `best`, `last`, `epoch-N`).
+- **Projeto W&B:** `convnextmicro-distill`
+- **Aluno registrado:** `convnextmicro-distill-resnet18-cars196` (aliases `best`, `last`, `epoch-N`).
+
+---
+
+## Trocar o professor para ConvNeXt-Tiny
+
+Todo o pipeline funciona igual com a **ConvNeXt-Tiny** como professor — basta
+trocar `--arch`/`--teacher_arch` para `convnext_tiny`. Os artefatos passam a usar
+esse prefixo, então não há colisão com os da ResNet-18:
+
+```bash
+# Fine-tune da ConvNeXt-Tiny (CUB; troque cub200 -> cars196 p/ o Cars)
+python finetune_classifier.py --arch convnext_tiny --dataset cub200 --data ../data \
+  --epochs 60 --batch 64 --amp --save_dir finetune/convnext_tiny-cub200 \
+  --wandb_project classifier-finetune --wandb_entity "$WANDB_ENTITY" \
+  --wandb_run_name convnext_tiny-cub200
+#   -> artefato: "$WANDB_ENTITY"/classifier-finetune/convnext_tiny-cub200:best
+
+# Destilação ConvNeXt-Tiny -> ConvNextMicro
+python distill_to_convnextmicro.py --teacher_arch convnext_tiny --dataset cub200 \
+  --data ../data --amp \
+  --teacher_artifact "$WANDB_ENTITY"/classifier-finetune/convnext_tiny-cub200:best \
+  --save_dir distill_runs/convnext_tiny-cub200 \
+  --wandb_project convnextmicro-distill --wandb_entity "$WANDB_ENTITY" \
+  --wandb_run_name distill-convnext_tiny-cub200
+#   -> artefato: convnextmicro-distill-convnext_tiny-cub200:best
+```
+
+> `--arch convnext_tiny` usa por padrão AdamW (lr 1e-4); `resnet18` usa SGD
+> (lr 0.01). O fine-tune infere isso de `teacher_models.ARCHS` — sobrescreva com
+> `--opt`/`--lr` se quiser.
 
 ---
 
 ## Métricas, validação e seleção de modelo (política comum)
 
-Todos os experimentos de classificação (`finetune_resnet18.py` e
-`distill_resnet18_convnext.py`) seguem a mesma política, para que sejam
+Todos os experimentos de classificação (`finetune_classifier.py` e
+`distill_to_convnextmicro.py`) seguem a mesma política, para que sejam
 comparáveis:
 
 - **Mesmas métricas em todos os splits:** top-1 e top-5 são calculadas em
@@ -292,20 +329,24 @@ Em vez dos comandos acima, dá para usar os launchers (edite o `TEACHER_ARTIFACT
 no topo de cada um com a referência completa do professor):
 
 ```bash
-bash examples/distill_convnext_cub.sh
-bash examples/distill_convnext_cars.sh
+# TEACHER_ARCH escolhe o professor (resnet18 | convnext_tiny)
+TEACHER_ARCH=resnet18      bash examples/distill_convnext_cub.sh
+TEACHER_ARCH=convnext_tiny bash examples/distill_convnext_cars.sh
 ```
 
 ---
 
 ## Resumo dos artefatos gerados no W&B
 
+Os nomes incluem a arquitetura (`<arch>`), então ResNet-18 e ConvNeXt-Tiny não
+colidem. Com `<arch>` = `resnet18`:
+
 | Passo | Projeto W&B | Artefato | Alias | Como referenciar |
 |------|--------------|----------|-------|------------------|
-| 1 | `resnet18-finetune` | `resnet18-cub200` | `best` | `<entidade>/resnet18-finetune/resnet18-cub200:best` |
-| 2 | `resnet18-finetune` | `resnet18-cars196` | `best` | `<entidade>/resnet18-finetune/resnet18-cars196:best` |
-| 3 | `resnet18-to-convnext-distill` | `convnextmicro-distill-cub200` | `best` | `<entidade>/resnet18-to-convnext-distill/convnextmicro-distill-cub200:best` |
-| 4 | `resnet18-to-convnext-distill` | `convnextmicro-distill-cars196` | `best` | `<entidade>/resnet18-to-convnext-distill/convnextmicro-distill-cars196:best` |
+| 1 | `classifier-finetune` | `<arch>-cub200` | `best` | `<entidade>/classifier-finetune/<arch>-cub200:best` |
+| 2 | `classifier-finetune` | `<arch>-cars196` | `best` | `<entidade>/classifier-finetune/<arch>-cars196:best` |
+| 3 | `convnextmicro-distill` | `convnextmicro-distill-<arch>-cub200` | `best` | `<entidade>/convnextmicro-distill/convnextmicro-distill-<arch>-cub200:best` |
+| 4 | `convnextmicro-distill` | `convnextmicro-distill-<arch>-cars196` | `best` | `<entidade>/convnextmicro-distill/convnextmicro-distill-<arch>-cars196:best` |
 
 ---
 

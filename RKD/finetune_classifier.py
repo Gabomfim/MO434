@@ -1,25 +1,27 @@
-"""Fine-tune an ImageNet-1k pre-trained ResNet-18 on Cars-196 or CUB-200.
+"""Fine-tune an ImageNet-1k pre-trained classifier on Cars-196 or CUB-200.
 
 Standard classification fine-tuning (NOT the metric-learning split): uses the
 *Classification* dataset variants, which keep all classes and the dataset's
 official train/test split, and is evaluated with top-1 / top-5 accuracy.
 
-The ImageNet head is replaced by a fresh N-way linear layer (N inferred from
-the dataset). By default the backbone and the new head use different learning
-rates (--head_lr_mult), since the head trains from scratch while the backbone
-only adapts.
+Backbone is chosen with --arch {resnet18, convnext_tiny} (ImageNet-1k weights);
+the head is replaced by a fresh N-way linear layer (N inferred from --dataset).
+By default the backbone and the new head use different learning rates
+(--head_lr_mult), since the head trains from scratch while the backbone adapts.
+The per-arch default optimizer/lr (SGD for resnet18, AdamW for convnext_tiny)
+come from teacher_models.ARCHS and can be overridden with --opt/--lr.
 
-Select the dataset with --dataset {cars196,cub200}.
+Both the metrics policy (stratified val split, same top-1/top-5 on
+train/val/test, selection by best val) and the saved model are shared with the
+distillation script via classification_split / teacher_models.
 """
 
 import argparse
 import math
 import os
 
-import dataset
 import torch
 import torch.nn as nn
-import torchvision
 import torchvision.transforms as transforms
 import wandb
 from tqdm import tqdm
@@ -28,7 +30,10 @@ from classification_split import (
     evaluate_splits,
     log_dict,
 )
+from teacher_models import ARCHS, build_classifier
 from wandb_artifacts import log_model_artifact
+
+import dataset
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -44,8 +49,10 @@ DATASETS = {
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="Fine-tune ResNet-18 on Cars-196 / CUB-200")
+    p = argparse.ArgumentParser(
+        description="Fine-tune a classifier (resnet18/convnext_tiny) on Cars/CUB")
 
+    p.add_argument("--arch", choices=sorted(ARCHS), default="resnet18")
     p.add_argument("--dataset", choices=sorted(DATASETS), default="cars196")
     p.add_argument("--data", default="data")
     p.add_argument("--num_classes", type=int, default=None,
@@ -56,9 +63,9 @@ def build_parser():
     p.add_argument("--eval_every", type=int, default=1,
                    help="periodicidade (em épocas) p/ avaliar train/val/test")
 
-    # optimization
-    p.add_argument("--opt", choices=["sgd", "adamw"], default="sgd")
-    p.add_argument("--lr", type=float, default=0.01, help="backbone base lr")
+    # optimization (opt/lr default per --arch via teacher_models.ARCHS)
+    p.add_argument("--opt", choices=["sgd", "adamw"], default=None)
+    p.add_argument("--lr", type=float, default=None, help="backbone base lr")
     p.add_argument("--head_lr_mult", type=float, default=10.0,
                    help="head lr = lr * this (head trains from scratch)")
     p.add_argument("--weight_decay", type=float, default=1e-4)
@@ -79,11 +86,11 @@ def build_parser():
     p.add_argument("--resume", default=None)
 
     # wandb
-    p.add_argument("--wandb_project", default="resnet18-finetune")
+    p.add_argument("--wandb_project", default="classifier-finetune")
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_run_name", default=None)
     p.add_argument("--wandb_group", default=None,
-                   help="defaults to 'resnet18-<dataset>'")
+                   help="defaults to '<arch>-<dataset>'")
     p.add_argument("--wandb_mode", choices=["online", "offline", "disabled"],
                    default="online")
     p.add_argument("--wandb_tags", nargs="*", default=None)
@@ -107,25 +114,9 @@ def _params_to_cli_args(params):
     return out
 
 
-def build_model(num_classes, freeze_backbone):
-    """ImageNet-pretrained ResNet-18 with a fresh num_classes head."""
-    try:  # torchvision >= 0.13 weights API
-        weights = torchvision.models.ResNet18_Weights.IMAGENET1K_V1
-        model = torchvision.models.resnet18(weights=weights)
-    except AttributeError:  # older fallback
-        model = torchvision.models.resnet18(pretrained=True)
-
-    if freeze_backbone:
-        for param in model.parameters():
-            param.requires_grad = False
-
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
-    return model
-
-
 def build_optimizer(model, opts):
     """Separate param groups: backbone at lr, fresh head at lr * head_lr_mult."""
-    head_params = list(model.fc.parameters())
+    head_params = list(model.head.parameters())
     head_ids = {id(p) for p in head_params}
     backbone_params = [p for p in model.parameters()
                        if p.requires_grad and id(p) not in head_ids]
@@ -166,8 +157,13 @@ def run_experiment(opts):
     dataset_cls, default_classes, marker = DATASETS[opts.dataset]
     if opts.num_classes is None:
         opts.num_classes = default_classes
+    # opt/lr default per arch (SGD/0.01 resnet18, AdamW/1e-4 convnext_tiny)
+    if opts.opt is None:
+        opts.opt = ARCHS[opts.arch]["opt"]
+    if opts.lr is None:
+        opts.lr = ARCHS[opts.arch]["lr"]
     if opts.wandb_group is None:
-        opts.wandb_group = "resnet18-%s" % opts.dataset
+        opts.wandb_group = "%s-%s" % (opts.arch, opts.dataset)
 
     normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
     train_tf = transforms.Compose([
@@ -189,7 +185,8 @@ def run_experiment(opts):
     print(f"dataset={opts.dataset} train={sizes['train']} val={sizes['val']} "
           f"test={sizes['test']} classes={opts.num_classes}")
 
-    model = build_model(opts.num_classes, opts.freeze_backbone).to(device)
+    model = build_classifier(opts.arch, opts.num_classes, pretrained=True,
+                             freeze_backbone=opts.freeze_backbone).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=opts.label_smoothing)
     optimizer = build_optimizer(model, opts)
     scheduler = build_scheduler(optimizer, opts, len(train_loader))
@@ -199,7 +196,7 @@ def run_experiment(opts):
         return model(images)
     scaler = torch.cuda.amp.GradScaler(enabled=opts.amp and device == "cuda")
 
-    tags = ["finetune", "resnet18", opts.dataset]
+    tags = ["finetune", opts.arch, opts.dataset]
     if opts.wandb_tags:
         tags.extend(opts.wandb_tags)
     run = wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
@@ -208,7 +205,7 @@ def run_experiment(opts):
                      config={**vars(opts), "device": device})
 
     start_epoch, best_val_top1, best_state = 0, 0.0, None
-    art_name = "resnet18-%s" % opts.dataset
+    art_name = "%s-%s" % (opts.arch, opts.dataset)
     if opts.resume:
         ckpt = torch.load(opts.resume, map_location=device)
         model.load_state_dict(ckpt["model"])
