@@ -83,8 +83,57 @@ Esquema **sample** (G grafos fixos de N nós): `E = G·C(N,2)` ⟹
 > (afim em 1/B para partition; constante para sample) deve se manter se o custo
 > do embedding for ~linear no nº de arestas.
 
+## Embeddings de grafo (invariantes a permutação)
+
+Dois embeddings determinísticos do grafo inteiro a partir da matriz de
+distâncias (`embeddings.py`), ambos em **PyTorch e diferenciáveis** (o lado do
+student precisa de gradiente):
+
+1. **`node_profile_embedding(D, sort_key="lex")`** — Perfil de Nós Ordenado.
+   Ordena as distâncias dentro de cada nó (perfil de vizinhança), ordena os
+   perfis entre si e achata. Tamanho fixo `N·(N-1)`.
+   - **Padrão `sort_key="lex"` (lexicográfica), não `"mean"`.** Ordenar por média
+     **quebra a invariância em empates** (`argsort` desempata pela posição
+     original → muda sob embaralhamento). O selftest demonstra: com médias
+     empatadas, `mean` dá diferença `2.0` sob permutação; `lex` dá `0.0`. A
+     opção `"mean"` existe só para paridade com o código de referência.
+2. **`mds_spectral_embedding(D)`** — autovalores do MDS clássico (espectro da
+   Gram após dupla-centralização de D²), em ordem decrescente. Tamanho fixo `N`.
+   Invariante por similaridade de permutação.
+
+Para destilação, passe `normalize=True` (default na perda): normaliza cada
+matriz pela distância média, tornando o embedding **escala-invariante** — sem
+isso a perda compararia a escala das distâncias (teacher 512-d vs student
+192-d), não a geometria.
+
+Validação (`python -m graph_rkd.selftest`): paridade exata com o numpy de
+referência; invariância (A vs embaralhado = 0) e sensibilidade (A vs B > 0) para
+os dois métodos; gradiente finito e não-nulo; e a perda → 0 quando
+student == teacher.
+
+## Perda de destilação Graph-RKD
+
+`GraphRKDLoss(method="profile"|"mds", n_nodes=N, sampling="partition"|"random", ...)`
+generaliza o RKD: casa o embedding do grafo de N nós entre teacher e student
+(mesmos índices nos dois lados), em vez de pares (RKD-D) ou trios (RKD-A).
+
+```python
+from graph_rkd import GraphRKDLoss, find_best_n
+
+N = find_best_n(batch_size=128, edge_budget=1024)   # ex.: 17
+graph_rkd = GraphRKDLoss(method="profile", n_nodes=N, sampling="partition")
+
+# no loop de treino (student_emb, teacher_emb: (B, d)):
+loss_graph = graph_rkd(student_emb, teacher_emb)     # teacher sem grad internamente
+```
+
+Para plugar no `distill_to_convnextmicro.py`: use os embeddings agrupados do
+aluno/professor (`forward_features(...)["embedding"]`) e some `graph_rkd_ratio *
+loss_graph` à perda total — no lugar de (ou junto com) `dist_ratio`/`angle_ratio`.
+
 ## API
 
+Escolha de N / combinatória:
 - `unique_graphs(B, N)` / `ordered_tuples(B, N)` / `permutation_reduction(N)`
 - `step_edge_cost(B, N, scheme, graphs_per_step)`
 - `largest_feasible_n(predicate, lo, hi)` — busca binária monotônica genérica
@@ -93,4 +142,11 @@ Esquema **sample** (G grafos fixos de N nós): `E = G·C(N,2)` ⟹
 - `derive_scaling_rule(batch_sizes, edge_budget, scheme, graphs_per_step)`
 - `plot_unique_graphs(B, path)`
 
-Demo: `python graph_rkd/node_search.py`.
+Embeddings de grafo / perda:
+- `pairwise_distance_matrix(node_emb, squared)` / `normalize_distance_matrix(D)`
+- `node_profile_embedding(D, sort_key, normalize)` (Método 1)
+- `mds_spectral_embedding(D, normalize, jitter)` (Método 2)
+- `node_profile_embedding_np(D)` (referência numpy)
+- `sample_graphs(B, n_nodes, sampling, ...)` / `GraphRKDLoss(...)`
+
+Demo: `python graph_rkd/node_search.py` · Testes: `python -m graph_rkd.selftest`.
