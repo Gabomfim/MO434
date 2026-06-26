@@ -47,6 +47,7 @@ from classification_split import (
 )
 from teacher_models import ARCHS, load_teacher as _load_teacher_model
 from wandb_artifacts import log_model_artifact, resolve_teacher_checkpoint
+from graph_rkd import GraphContrastiveDistillLoss, GraphRKDLoss
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -87,6 +88,19 @@ def build_parser():
     p.add_argument("--angle_ratio", type=float, default=50.0, help="RKD angle (paper)")
     p.add_argument("--at_ratio", type=float, default=1000.0, help="attention transfer")
     p.add_argument("--label_smoothing", type=float, default=0.1)
+
+    # Graph-RKD (loss de grafo de N nós, distância euclidiana)
+    p.add_argument("--graph_rkd_mode", choices=["off", "regression", "contrastive"],
+                   default="off")
+    p.add_argument("--graph_rkd_method", choices=["profile", "mds"], default="profile")
+    p.add_argument("--graph_rkd_nodes", type=int, default=8, help="N (busca binária)")
+    p.add_argument("--graph_rkd_ratio", type=float, default=0.0)
+    p.add_argument("--graph_rkd_sampling", choices=["partition", "random"],
+                   default="partition")
+    p.add_argument("--graph_rkd_graphs", type=int, default=None,
+                   help="grafos/passo qdo sampling=random")
+    p.add_argument("--num_negatives", type=int, default=10, help="contrastive")
+    p.add_argument("--temperature", type=float, default=0.07, help="contrastive")
 
     # optimization
     p.add_argument("--lr", type=float, default=1e-3)
@@ -214,6 +228,21 @@ def run_experiment(opts):
     angle_criterion = RKdAngle()
     at_criterion = AttentionTransfer()
 
+    # Graph-RKD: loss de grafo de N nós (euclidiana), somada à loss padrão.
+    graph_criterion = None
+    if opts.graph_rkd_mode != "off" and opts.graph_rkd_ratio > 0:
+        if opts.graph_rkd_mode == "regression":
+            graph_criterion = GraphRKDLoss(
+                method=opts.graph_rkd_method, n_nodes=opts.graph_rkd_nodes,
+                sampling=opts.graph_rkd_sampling,
+                graphs_per_step=opts.graph_rkd_graphs).to(device)
+        else:  # contrastive
+            graph_criterion = GraphContrastiveDistillLoss(
+                method=opts.graph_rkd_method, n_nodes=opts.graph_rkd_nodes,
+                sampling=opts.graph_rkd_sampling,
+                graphs_per_step=opts.graph_rkd_graphs,
+                num_negatives=opts.num_negatives, temperature=opts.temperature).to(device)
+
     optimizer = torch.optim.AdamW(student.parameters(), lr=opts.lr,
                                   weight_decay=opts.weight_decay, betas=(0.9, 0.999))
     scheduler = build_scheduler(optimizer, opts, len(train_loader))
@@ -242,7 +271,7 @@ def run_experiment(opts):
     best_val_top1, best_state = 0.0, None
     for epoch in range(1, opts.epochs + 1):
         student.train()
-        sums = {"loss": 0, "ce": 0, "kd": 0, "dist": 0, "angle": 0, "at": 0}
+        sums = {"loss": 0, "ce": 0, "kd": 0, "dist": 0, "angle": 0, "at": 0, "graph": 0}
         pbar = tqdm(train_loader, ncols=100, desc=f"[Distill {epoch}]")
         for images, targets in pbar:
             images, targets = images.to(device), targets.to(device)
@@ -256,7 +285,9 @@ def run_experiment(opts):
                 dist = opts.dist_ratio * dist_criterion(s_emb, t["embedding"])
                 angle = opts.angle_ratio * angle_criterion(s_emb, t["embedding"])
                 at = opts.at_ratio * at_criterion(s_s2, t["stage2"])
-                loss = ce + kd + dist + angle + at
+                graph = (opts.graph_rkd_ratio * graph_criterion(s_emb, t["embedding"])
+                         if graph_criterion is not None else s_logits.new_zeros(()))
+                loss = ce + kd + dist + angle + at + graph
 
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
@@ -268,7 +299,7 @@ def run_experiment(opts):
             scheduler.step()
 
             for k, v in (("loss", loss), ("ce", ce), ("kd", kd), ("dist", dist),
-                         ("angle", angle), ("at", at)):
+                         ("angle", angle), ("at", at), ("graph", graph)):
                 sums[k] += float(v)
             pbar.set_postfix(loss=f"{loss.item():.3f}",
                              lr=f"{optimizer.param_groups[0]['lr']:.1e}")
@@ -321,7 +352,9 @@ def run_experiment(opts):
         f"{s} top1={m['top1']*100:.2f}" for s, m in final.items())
         + f" | teacher test top1={teacher_metrics['test']['top1']*100:.2f}")
     run.finish()
-    return final["test"]["top1"]
+    # dict com os 3 splits + best_val (a busca binária usa val, nunca test).
+    return {"final": final, "best_val_top1": best_val_top1,
+            "teacher": teacher_metrics}
 
 
 def run_with_cli_args(cli_args):

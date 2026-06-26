@@ -162,6 +162,26 @@ Notas de implementação (vs. o protocolo de referência):
 - `SampledGraphContrastiveLoss(temperature, num_negative_samples)` é a classe
   genérica com a assinatura `(anchor, positive, pool)` pedida.
 
+## Experimentos: loss padrão + Graph-RKD, busca binária de N
+
+`distill_to_convnextmicro.py` aceita a loss de grafo via flags
+(`--graph_rkd_mode {regression,contrastive}`, `--graph_rkd_method {profile,mds}`,
+`--graph_rkd_nodes N`, `--graph_rkd_ratio`, `--num_negatives`, `--temperature`),
+somada à loss padrão (CE + Hinton KD). Distância euclidiana.
+
+O orquestrador `run_graph_rkd_search.py` roda, para cada (modo × método), a
+**busca binária de N**: teto por orçamento (`find_best_n`) e "joelho" por
+qualidade de **validação** (`find_knee_n`), com uma run curta por candidato e
+uma run longa no N escolhido. Para isolar o efeito da loss de grafo, ele zera
+RKD-D/RKD-A/AT (a loss de grafo é a componente relacional sob teste).
+
+```bash
+TEACHER_ARCH=resnet18 DATASET=cub200 bash examples/graph_rkd_search.sh
+```
+
+Saída: tabela `(modo, método) -> N*, val@final`. Atenção: dispara muitas
+destilações (use GPU; ajuste `--search_epochs`/`--final_epochs`).
+
 ## API
 
 Escolha de N / combinatória:
