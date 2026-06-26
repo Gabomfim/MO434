@@ -261,6 +261,31 @@ python distill_resnet18_convnext.py \
 
 ---
 
+## Métricas, validação e seleção de modelo (política comum)
+
+Todos os experimentos de classificação (`finetune_resnet18.py` e
+`distill_resnet18_convnext.py`) seguem a mesma política, para que sejam
+comparáveis:
+
+- **Mesmas métricas em todos os splits:** top-1 e top-5 são calculadas em
+  **train, val e test** e logadas com as chaves `train/top1`, `train/top5`,
+  `val/top1`, `val/top5`, `test/top1`, `test/top5`.
+- **Validação sempre existe:** como Cars-196 e CUB-200 só têm train/test
+  oficiais, um split de **validação estratificado por classe** é derivado do
+  treino (`--val_fraction`, padrão `0.1`, com semente `--seed`). O teste oficial
+  nunca é usado para seleção.
+- **Modelo final = melhor generalização:** durante o treino, o checkpoint é
+  selecionado pelo **maior `val/top1`** (nunca pelo teste). Ao final, esse
+  checkpoint é recarregado e as métricas finais nos três splits são logadas em
+  `final/<split>/top{1,5}` e no `run.summary` (`final_test_top1`, etc.).
+- `--eval_every` controla a periodicidade da avaliação (padrão `1` no
+  fine-tune, `5` na destilação, dado o treino mais longo).
+
+Na destilação, o professor (ResNet-18) é avaliado nos mesmos splits como
+referência (`teacher/<split>/top{1,5}`).
+
+---
+
 ## Atalho: scripts de exemplo
 
 Em vez dos comandos acima, dá para usar os launchers (edite o `TEACHER_ARTIFACT`

@@ -22,8 +22,12 @@ import torch.nn as nn
 import torchvision
 import torchvision.transforms as transforms
 import wandb
-from torch.utils.data import DataLoader
 from tqdm import tqdm
+from classification_split import (
+    build_classification_loaders,
+    evaluate_splits,
+    log_dict,
+)
 from wandb_artifacts import log_model_artifact
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -47,6 +51,10 @@ def build_parser():
     p.add_argument("--num_classes", type=int, default=None,
                    help="override; inferred from --dataset when omitted")
     p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--val_fraction", type=float, default=0.1,
+                   help="fração do treino reservada como validação (estratificada)")
+    p.add_argument("--eval_every", type=int, default=1,
+                   help="periodicidade (em épocas) p/ avaliar train/val/test")
 
     # optimization
     p.add_argument("--opt", choices=["sgd", "adamw"], default="sgd")
@@ -150,21 +158,6 @@ def build_scheduler(optimizer, opts, iters_per_epoch):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, [make(f) for f in floors])
 
 
-@torch.no_grad()
-def evaluate(model, loader, device, desc):
-    model.eval()
-    top1 = top5 = total = 0
-    for images, targets in tqdm(loader, ncols=80, desc=desc):
-        images, targets = images.to(device), targets.to(device)
-        logits = model(images)
-        _, pred5 = logits.topk(5, dim=1)
-        correct = pred5 == targets.unsqueeze(1)
-        top1 += correct[:, 0].sum().item()
-        top5 += correct.any(dim=1).sum().item()
-        total += targets.numel()
-    return top1 / max(1, total), top5 / max(1, total)
-
-
 def run_experiment(opts):
     torch.manual_seed(opts.seed)
     torch.cuda.manual_seed_all(opts.seed)
@@ -189,21 +182,21 @@ def run_experiment(opts):
         normalize])
 
     download = not os.path.exists(os.path.join(os.path.abspath(opts.data), marker))
-    train_set = dataset_cls(opts.data, train=True, transform=train_tf,
-                            download=download)
-    test_set = dataset_cls(opts.data, train=False, transform=test_tf, download=False)
-    print(f"dataset={opts.dataset} train={len(train_set)} test={len(test_set)} "
-          f"classes={opts.num_classes}")
-
-    train_loader = DataLoader(train_set, batch_size=opts.batch, shuffle=True,
-                              num_workers=opts.workers, pin_memory=True, drop_last=True)
-    test_loader = DataLoader(test_set, batch_size=opts.batch, shuffle=False,
-                             num_workers=opts.workers, pin_memory=True)
+    loaders, sizes = build_classification_loaders(
+        dataset_cls, opts.data, train_tf, test_tf, opts.batch, opts.workers,
+        opts.val_fraction, opts.seed, download)
+    train_loader = loaders["train"]
+    print(f"dataset={opts.dataset} train={sizes['train']} val={sizes['val']} "
+          f"test={sizes['test']} classes={opts.num_classes}")
 
     model = build_model(opts.num_classes, opts.freeze_backbone).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=opts.label_smoothing)
     optimizer = build_optimizer(model, opts)
     scheduler = build_scheduler(optimizer, opts, len(train_loader))
+
+    # logits do classificador (mesma assinatura usada por evaluate_splits)
+    def logits_fn(images):
+        return model(images)
     scaler = torch.cuda.amp.GradScaler(enabled=opts.amp and device == "cuda")
 
     tags = ["finetune", "resnet18", opts.dataset]
@@ -214,14 +207,15 @@ def run_experiment(opts):
                      mode=opts.wandb_mode, tags=tags,
                      config={**vars(opts), "device": device})
 
-    start_epoch, best_top1 = 0, 0.0
+    start_epoch, best_val_top1, best_state = 0, 0.0, None
+    art_name = "resnet18-%s" % opts.dataset
     if opts.resume:
         ckpt = torch.load(opts.resume, map_location=device)
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
         start_epoch = ckpt["epoch"] + 1
-        best_top1 = ckpt.get("best_top1", 0.0)
+        best_val_top1 = ckpt.get("best_val_top1", 0.0)
         print(f"resumed from {opts.resume} at epoch {start_epoch}")
 
     for epoch in range(start_epoch, opts.epochs):
@@ -247,38 +241,63 @@ def run_experiment(opts):
                              lr=f"{optimizer.param_groups[0]['lr']:.1e}")
 
         train_loss = running / max(1, len(train_loader))
-        top1, top5 = evaluate(model, test_loader, device, f"[Val {epoch}]")
-        improved = top1 > best_top1
-        best_top1 = max(best_top1, top1)
-        print(f"[Epoch {epoch}] loss={train_loss:.4f} top1={top1*100:.2f} "
-              f"top5={top5*100:.2f} best_top1={best_top1*100:.2f}")
+        is_eval_epoch = (epoch % opts.eval_every == 0) or (epoch == opts.epochs - 1)
+        if not is_eval_epoch:
+            run.log({"epoch": epoch, "train/loss": train_loss,
+                     "lr/head": optimizer.param_groups[0]["lr"]}, step=epoch)
+            continue
+
+        # Mesmas métricas (top-1/top-5) em train, val e test.
+        model.eval()
+        metrics = evaluate_splits(logits_fn, loaders, device, tag=f"E{epoch} ")
+        val_top1 = metrics["val"]["top1"]
+        # Seleção pela melhor generalização: melhor top-1 de VALIDAÇÃO.
+        improved = val_top1 > best_val_top1
+        if improved:
+            best_val_top1 = val_top1
+            best_state = {k: v.detach().cpu().clone()
+                          for k, v in model.state_dict().items()}
+        print(f"[Epoch {epoch}] loss={train_loss:.4f} "
+              f"train@1={metrics['train']['top1']*100:.2f} "
+              f"val@1={val_top1*100:.2f} test@1={metrics['test']['top1']*100:.2f} "
+              f"best_val@1={best_val_top1*100:.2f}")
 
         run.log({"epoch": epoch, "train/loss": train_loss,
-                 "val/top1": top1, "val/top5": top5, "val/best_top1": best_top1,
-                 "val/error": 1.0 - top1,
-                 "lr/head": optimizer.param_groups[0]["lr"]}, step=epoch)
+                 "lr/head": optimizer.param_groups[0]["lr"],
+                 "val/best_top1": best_val_top1,
+                 **log_dict(metrics)}, step=epoch)
 
         if opts.save_dir:
             os.makedirs(opts.save_dir, exist_ok=True)
             state = {"model": model.state_dict(), "optimizer": optimizer.state_dict(),
                      "scheduler": scheduler.state_dict(), "epoch": epoch,
-                     "best_top1": best_top1}
+                     "best_val_top1": best_val_top1}
             last_path = os.path.join(opts.save_dir, "last.pth")
             torch.save(state, last_path)
-            art_name = "resnet18-%s" % opts.dataset
             log_model_artifact(run, last_path, art_name,
                                aliases=["last", "epoch-%d" % epoch],
-                               metadata={"epoch": epoch, "top1": top1, "top5": top5})
+                               metadata={"epoch": epoch, **log_dict(metrics)})
             if improved:
                 best_path = os.path.join(opts.save_dir, "best.pth")
                 torch.save(state, best_path)
                 log_model_artifact(run, best_path, art_name, aliases=["best"],
-                                   metadata={"epoch": epoch, "best_top1": best_top1})
+                                   metadata={"epoch": epoch,
+                                             "val_top1": best_val_top1})
 
-    run.summary["best_top1"] = best_top1
-    print(f"Done. best top1 = {best_top1*100:.2f}")
+    # Métricas finais com o modelo que MAXIMIZA A GENERALIZAÇÃO (melhor val).
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model.eval()
+    final = evaluate_splits(logits_fn, loaders, device, tag="final ")
+    run.log(log_dict(final, prefix="final/"))
+    for split, m in final.items():
+        run.summary[f"final_{split}_top1"] = m["top1"]
+        run.summary[f"final_{split}_top5"] = m["top5"]
+    run.summary["best_val_top1"] = best_val_top1
+    print("Done. métricas finais (modelo de melhor validação): "
+          + " | ".join(f"{s} top1={m['top1']*100:.2f}" for s, m in final.items()))
     run.finish()
-    return best_top1
+    return final["test"]["top1"]
 
 
 def run_with_cli_args(cli_args):

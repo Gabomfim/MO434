@@ -39,8 +39,12 @@ import torchvision.transforms as transforms
 import wandb
 from metric.loss import AttentionTransfer, RKdAngle, RkdDistance
 from model import ConvNextMicro
-from torch.utils.data import DataLoader
 from tqdm import tqdm
+from classification_split import (
+    build_classification_loaders,
+    evaluate_splits,
+    log_dict,
+)
 from wandb_artifacts import log_model_artifact, resolve_teacher_checkpoint
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -108,6 +112,10 @@ def build_parser():
     p.add_argument("--min_lr", type=float, default=1e-6)
     p.add_argument("--batch", type=int, default=128)
     p.add_argument("--clip_grad", type=float, default=0.0)
+    p.add_argument("--val_fraction", type=float, default=0.1,
+                   help="fração do treino reservada como validação (estratificada)")
+    p.add_argument("--eval_every", type=int, default=5,
+                   help="periodicidade (em épocas) p/ avaliar train/val/test")
     p.add_argument("--amp", action="store_true")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--save_dir", default=None)
@@ -174,21 +182,6 @@ def build_scheduler(optimizer, opts, iters_per_epoch):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, fn)
 
 
-@torch.no_grad()
-def evaluate(net, loader, device, desc):
-    net.eval()
-    top1 = top5 = total = 0
-    for images, targets in tqdm(loader, ncols=80, desc=desc):
-        images, targets = images.to(device), targets.to(device)
-        logits = net.forward_features(images)["logits"]
-        _, pred5 = logits.topk(5, dim=1)
-        correct = pred5 == targets.unsqueeze(1)
-        top1 += correct[:, 0].sum().item()
-        top5 += correct.any(dim=1).sum().item()
-        total += targets.numel()
-    return top1 / max(1, total), top5 / max(1, total)
-
-
 def student_outputs(student, images):
     feats = student.forward_features(images)
     return student.fc(feats["embedding"]), feats["embedding"], feats["stage2"]
@@ -216,15 +209,12 @@ def run_experiment(opts):
         transforms.ToTensor(), normalize])
 
     download = not os.path.exists(os.path.join(os.path.abspath(opts.data), marker))
-    train_set = dataset_cls(opts.data, train=True, transform=train_tf, download=download)
-    test_set = dataset_cls(opts.data, train=False, transform=test_tf, download=False)
-    print(f"dataset={opts.dataset} train={len(train_set)} test={len(test_set)} "
-          f"classes={opts.num_classes}")
-
-    train_loader = DataLoader(train_set, batch_size=opts.batch, shuffle=True,
-                              num_workers=opts.workers, pin_memory=True, drop_last=True)
-    test_loader = DataLoader(test_set, batch_size=opts.batch, shuffle=False,
-                             num_workers=opts.workers, pin_memory=True)
+    loaders, sizes = build_classification_loaders(
+        dataset_cls, opts.data, train_tf, test_tf, opts.batch, opts.workers,
+        opts.val_fraction, opts.seed, download)
+    train_loader = loaders["train"]
+    print(f"dataset={opts.dataset} train={sizes['train']} val={sizes['val']} "
+          f"test={sizes['test']} classes={opts.num_classes}")
 
     tags = ["distillation", "resnet18", "convnextmicro", opts.dataset]
     if opts.wandb_tags:
@@ -252,11 +242,23 @@ def run_experiment(opts):
     n_t = sum(p.numel() for p in teacher.parameters())
     print(f"student={n_s/1e6:.2f}M teacher={n_t/1e6:.2f}M device={device}")
 
-    t_top1, t_top5 = evaluate(teacher, test_loader, device, "[Teacher]")
-    run.log({"teacher/top1": t_top1, "teacher/top5": t_top5}, step=0)
-    print(f"teacher test top1={t_top1*100:.2f} top5={t_top5*100:.2f}")
+    # logits callables (mesma assinatura usada por evaluate_splits)
+    def student_logits(images):
+        return student(images)  # apply_softmax=False -> logits
 
-    best_top1 = 0.0
+    def teacher_logits(images):
+        return teacher.forward_features(images)["logits"]
+
+    art_name = "convnextmicro-distill-%s" % opts.dataset
+
+    # Professor avaliado nos MESMOS splits/métricas, como referência.
+    teacher.eval()
+    teacher_metrics = evaluate_splits(teacher_logits, loaders, device, tag="teacher ")
+    run.log(log_dict(teacher_metrics, prefix="teacher/"), step=0)
+    print("teacher: " + " | ".join(
+        f"{s} top1={m['top1']*100:.2f}" for s, m in teacher_metrics.items()))
+
+    best_val_top1, best_state = 0.0, None
     for epoch in range(1, opts.epochs + 1):
         student.train()
         sums = {"loss": 0, "ce": 0, "kd": 0, "dist": 0, "angle": 0, "at": 0}
@@ -291,30 +293,54 @@ def run_experiment(opts):
                              lr=f"{optimizer.param_groups[0]['lr']:.1e}")
 
         n = len(train_loader)
-        top1, top5 = evaluate(student, test_loader, device, f"[Eval {epoch}]")
-        improved = top1 > best_top1
-        best_top1 = max(best_top1, top1)
-        print(f"[Epoch {epoch}] loss={sums['loss']/n:.4f} top1={top1*100:.2f} "
-              f"top5={top5*100:.2f} best={best_top1*100:.2f}")
+        loss_log = {f"train/{k}_loss": v / n for k, v in sums.items()}
+        is_eval_epoch = (epoch % opts.eval_every == 0) or (epoch == opts.epochs)
+        if not is_eval_epoch:
+            run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
+                     **loss_log}, step=epoch)
+            continue
+
+        # Mesmas métricas (top-1/top-5) em train, val e test (aluno).
+        student.eval()
+        metrics = evaluate_splits(student_logits, loaders, device, tag=f"E{epoch} ")
+        val_top1 = metrics["val"]["top1"]
+        improved = val_top1 > best_val_top1   # seleção pela melhor VALIDAÇÃO
+        if improved:
+            best_val_top1 = val_top1
+            best_state = {k: v.detach().cpu().clone()
+                          for k, v in student.state_dict().items()}
+        print(f"[Epoch {epoch}] loss={sums['loss']/n:.4f} "
+              f"train@1={metrics['train']['top1']*100:.2f} "
+              f"val@1={val_top1*100:.2f} test@1={metrics['test']['top1']*100:.2f} "
+              f"best_val@1={best_val_top1*100:.2f}")
         run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
-                 "val/top1": top1, "val/top5": top5, "val/best_top1": best_top1,
-                 **{f"train/{k}_loss": v / n for k, v in sums.items()}}, step=epoch)
+                 "val/best_top1": best_val_top1, **loss_log,
+                 **log_dict(metrics)}, step=epoch)
 
         if opts.save_dir:
             os.makedirs(opts.save_dir, exist_ok=True)
             last_path = os.path.join(opts.save_dir, "student_last.pth")
             torch.save(student.state_dict(), last_path)
             aliases = ["last", "epoch-%d" % epoch] + (["best"] if improved else [])
-            log_model_artifact(run, last_path, "convnextmicro-distill-%s" % opts.dataset,
-                               aliases=aliases,
-                               metadata={"epoch": epoch, "top1": top1, "top5": top5,
-                                         "best_top1": best_top1})
+            log_model_artifact(run, last_path, art_name, aliases=aliases,
+                               metadata={"epoch": epoch, **log_dict(metrics)})
 
-    run.summary["best_top1"] = best_top1
-    run.summary["teacher_top1"] = t_top1
-    print(f"Done. student best top1 = {best_top1*100:.2f} (teacher {t_top1*100:.2f})")
+    # Métricas finais com o aluno que MAXIMIZA A GENERALIZAÇÃO (melhor val).
+    if best_state is not None:
+        student.load_state_dict(best_state)
+    student.eval()
+    final = evaluate_splits(student_logits, loaders, device, tag="final ")
+    run.log(log_dict(final, prefix="final/"))
+    for split, m in final.items():
+        run.summary[f"final_{split}_top1"] = m["top1"]
+        run.summary[f"final_{split}_top5"] = m["top5"]
+    run.summary["best_val_top1"] = best_val_top1
+    run.summary["teacher_test_top1"] = teacher_metrics["test"]["top1"]
+    print("Done. aluno (melhor validação): " + " | ".join(
+        f"{s} top1={m['top1']*100:.2f}" for s, m in final.items())
+        + f" | teacher test top1={teacher_metrics['test']['top1']*100:.2f}")
     run.finish()
-    return best_top1
+    return final["test"]["top1"]
 
 
 def run_with_cli_args(cli_args):
