@@ -300,9 +300,9 @@ python distill_to_convnextmicro.py --teacher_arch convnext_tiny --dataset cub200
 
 ## Métricas, validação e seleção de modelo (política comum)
 
-Todos os experimentos de classificação (`finetune_classifier.py` e
-`distill_to_convnextmicro.py`) seguem a mesma política, para que sejam
-comparáveis:
+Todos os experimentos de classificação (`finetune_classifier.py`,
+`distill_to_convnextmicro.py` e o baseline `train_convnextmicro.py`) seguem a
+mesma política, para que sejam comparáveis:
 
 - **Mesmas métricas em todos os splits:** top-1 e top-5 são calculadas em
   **train, val e test** e logadas com as chaves `train/top1`, `train/top5`,
@@ -318,8 +318,31 @@ comparáveis:
 - `--eval_every` controla a periodicidade da avaliação (padrão `1` no
   fine-tune, `5` na destilação, dado o treino mais longo).
 
-Na destilação, o professor (ResNet-18) é avaliado nos mesmos splits como
-referência (`teacher/<split>/top{1,5}`).
+Na destilação, o professor é avaliado nos mesmos splits como referência
+(`teacher/<split>/top{1,5}`).
+
+---
+
+## Baseline para comparação (ConvNextMicro sem destilação)
+
+Para medir **quanto a destilação ajuda**, treine a ConvNextMicro do zero só com
+cross-entropy — mesma arquitetura, datasets, splits, métricas e hiperparâmetros
+do aluno destilado; a única diferença é a ausência do professor:
+
+```bash
+# roda os DOIS experimentos (Cars e CUB)
+bash examples/train_convnextmicro_baseline.sh
+
+# ou individualmente:
+python train_convnextmicro.py --dataset cub200 --data ../data --amp \
+  --save_dir baseline_runs/cub200 --wandb_project convnextmicro-distill \
+  --wandb_entity "$WANDB_ENTITY" --wandb_run_name baseline-cub200
+#   -> artefato: convnextmicro-baseline-cub200:best (mesmo projeto, p/ comparar)
+```
+
+Compare o `final_test_top1` de `convnextmicro-baseline-<dataset>` com o de
+`convnextmicro-distill-<arch>-<dataset>`: a diferença é o ganho atribuível à
+destilação.
 
 ---
 

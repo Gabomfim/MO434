@@ -89,6 +89,7 @@ Novos scripts / módulos:
 * `model/convnext_block.py`: `ConvNextBlock` + `Downsample`.
 * `model/convnext_micro.py`: classificador `ConvNextMicro` (`dims`/`depths` configuráveis, ~0,67M de parâmetros).
 * `train_convnext.py`: treina a ConvNextMicro do zero (receita ConvNeXt: AdamW, cosine+warmup, mixup/cutmix, RandAugment, EMA).
+* `train_convnextmicro.py`: **baseline de comparação** — treina a ConvNextMicro do zero (só CE) em `cars196`/`cub200`, com a mesma política de métricas/seleção e os mesmos hiperparâmetros do aluno destilado (isola o ganho da destilação).
 * `teacher_models.py`: wrappers de professor (`resnet18`, `convnext_tiny`) com interface uniforme (`forward_features` → stage2/embedding/logits) + factory.
 * `finetune_classifier.py`: fine-tune de um professor da ImageNet (`--arch resnet18|convnext_tiny`) em `cars196`/`cub200` (split oficial, top-1/top-5).
 * `distill_to_convnextmicro.py`: destila um professor (`--teacher_arch ...`) → ConvNextMicro (Hinton KD + RKD distance/angle + mapa de atenção).
