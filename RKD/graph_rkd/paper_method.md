@@ -1,5 +1,46 @@
 # Graph Relational Knowledge Distillation
 
+## Related Work
+
+**Knowledge distillation.** Knowledge distillation was introduced to compress a
+large teacher into a smaller student by matching softened output distributions
+(Hinton et al., 2015). Subsequent work transferred *intermediate* knowledge
+rather than only logits: FitNets matched hidden feature maps (Romero et al.,
+2015), and Attention Transfer matched spatial attention maps derived from
+activations (Zagoruyko & Komodakis, 2017). These methods align individual
+representations point by point.
+
+**Relational knowledge distillation.** Relational Knowledge Distillation (RKD)
+shifted the target from individual representations to the *relations* between
+examples, transferring pairwise distances and triplet angles (Park et al.,
+2019). Our method generalizes this idea to relations of arbitrary order $N$ by
+modeling each minibatch as a complete weighted graph; rather than enumerating the
+super-exponentially many ordered tuples that a naive higher-order RKD would
+require, we exploit permutation invariance to work with unordered node sets and
+sample graphs to keep the loss tractable.
+
+**Contrastive distillation and InfoNCE.** Contrastive learning maximizes
+agreement between related views while separating unrelated ones, formalized by
+the InfoNCE objective and its mutual-information bound (van den Oord et al.,
+2018) and scaled up by SimCLR (Chen et al., 2020) and MoCo (He et al., 2020).
+Contrastive Representation Distillation (CRD) applied this cross-model, pulling
+the student's representation toward the teacher's for the same input and pushing
+it away from others (Tian et al., 2020). Our contrastive objective adopts this
+view at the level of *graph* embeddings, with stochastic negative sampling in the
+tradition of noise-contrastive estimation (Gutmann & Hyvärinen, 2010; Mikolov et
+al., 2013).
+
+**Graph learning and permutation invariance.** Sampling-based training over
+large relational structures is standard in graph machine learning: GraphSAGE
+samples fixed-size neighborhoods (Hamilton et al., 2017) and PinSage scales this
+to web-scale graphs (Ying et al., 2018). The requirement that a set-level
+representation be invariant to input ordering is the defining property of set
+functions (Zaheer et al., 2017). Our graph descriptors follow this principle:
+the ordered node-profile embedding builds a permutation-invariant summary by
+sorting, while the spectral embedding uses the eigenvalues of the classical
+multidimensional-scaling Gram matrix (Torgerson, 1952; Cox & Cox, 2000), which
+are invariant under permutation similarity.
+
 ## From relational tuples to relational graphs
 
 Relational Knowledge Distillation (RKD) transfers the *mutual relations* between
