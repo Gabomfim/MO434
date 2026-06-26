@@ -151,21 +151,40 @@ relational geometry to the student through two complementary objectives.
 
 ## Choosing the relational order $N$
 
-The relational order $N$ is the central hyperparameter of the method. Under the
-assumption that distillation quality increases monotonically with $N$, the
-optimal $N$ is the largest value that remains within the available compute
-budget; because the per-step cost under the partition scheme is
-$E = K(N-1)/2$ edges, this yields the closed-form ceiling
+The relational order $N$ is the central hyperparameter of the method. Its
+selection has two distinct parts, and we treat them differently.
 
-$$N \;\le\; \frac{2E}{K} + 1,$$
+**Compute-budget ceiling (binary search).** The per-step cost under the
+partition scheme is $E = K(N-1)/2$ edges, so the largest order that fits a
+budget $E$ has the closed form
 
-i.e., the best feasible order is inversely proportional to the batch size. We
-tune $N$ with a **binary search**: feasibility under a resource budget is a
-monotonic predicate, so the largest feasible $N$ is found in $O(\log K)$
-evaluations; when quality exhibits diminishing returns rather than strict
-monotonicity, the same binary search locates the "knee" of the validation-quality
-curve, using the student's validation accuracy at each candidate $N$ as the
-search signal.
+$$N_{\max} \;\le\; \frac{2E}{K} + 1,$$
+
+i.e., the feasible order is inversely proportional to the batch size. Feasibility
+is a *monotonic, deterministic* predicate (if $N$ is infeasible, so is every
+larger $N$), so the ceiling $N_{\max}$ is found exactly by **binary search** in
+$O(\log K)$ evaluations and without any training.
+
+**Quality-driven selection (budget-bounded log-spaced sweep).** We deliberately
+do *not* use binary search on the validation quality $q(N)$. Binary search makes
+an irreversible left/right cut at each midpoint and is only valid when the search
+signal is monotonic and noiseless — neither holds here: $q(N)$ may rise and then
+fall (larger $N$ yields richer relations but fewer graphs per batch and a harder
+optimization), and each $q(N)$ is a single, stochastic training estimate. Instead
+we evaluate a set of **log-spaced candidate orders**
+
+$$\mathcal{C} \;=\; \{\,n_{\min},\; b\,n_{\min},\; b^2 n_{\min},\;\dots,\; N_{\max}\,\}, \qquad b=2,$$
+
+which contains $\approx\log_b N_{\max}$ points — the *same* training budget a
+binary search would spend — but reveals the shape of the quality–$N$ curve
+without assuming monotonicity. Each candidate is trained (short schedule) with
+$R$ seeds; its score is the mean best validation top-1 (test is never used for
+selection). We then pick $N^\*$ either by $\arg\max$ or, for parsimony, by the
+**one-standard-error rule** — the smallest $N$ whose mean score is within one
+standard error of the best, preferring cheaper (smaller-$N$) configurations when
+the difference is not statistically significant. A final long run is trained at
+$N^\*$. This costs $O(R\log_b N_{\max})$ trainings, is robust to non-monotonic and
+noisy quality curves, and exposes the curve for inspection.
 
 ## Algorithms
 
@@ -218,20 +237,27 @@ L <- CrossEntropy(f_s(X), y) + lambda_g * L_rel
 backprop and update f_s
 ```
 
-**Algorithm 4 — Selecting $N$ by binary search.** Feasibility ceiling from the
-compute budget, then the validation-quality knee.
+**Algorithm 4 — Selecting $N$ (budget-bounded log-spaced sweep).** Binary search
+fixes only the compute ceiling (exact); the quality-driven choice is a log-spaced
+sweep with seed averaging, which is robust to non-monotonic, noisy quality curves.
 
 ```
-Input : batch K, edge budget E, n_min, rel_tol; quality q(N) = best val top-1
-        of a short distillation run with order N
-N_max <- largest N with K (N-1)/2 <= E       # binary search on monotone feasibility
-lo <- n_min; hi <- N_max; N* <- lo
-while lo <= hi:                               # knee under diminishing returns
-    mid <- floor((lo + hi) / 2)
-    if (q(mid) - q(floor(mid/2))) / q(floor(mid/2)) >= rel_tol:
-        N* <- mid; lo <- mid + 1
-    else:
-        hi <- mid - 1
+Input : batch K, edge budget E, n_min, base b, seeds R, rule in {argmax, 1se}
+# 1) compute ceiling: binary search on the monotone feasibility predicate
+N_max <- largest N with K (N-1)/2 <= E         # = floor(2E/K + 1), no training
+# 2) log-spaced candidates (same budget as binary search, but shape-revealing)
+C <- { n_min, b*n_min, b^2*n_min, ..., N_max }  (sorted, unique)
+# 3) seed-averaged validation quality of each candidate
+for N in C:
+    vals <- [ best_val_top1( distill(order=N, short schedule, seed=r) ) : r in 1..R ]
+    mean[N] <- mean(vals);  sem[N] <- std(vals) / sqrt(R)
+# 4) selection
+if rule = argmax:
+    N* <- argmax_N mean[N]
+else:                                           # one-standard-error rule
+    best <- argmax_N mean[N]
+    N* <- smallest N in C with mean[N] >= mean[best] - sem[best]
+# 5) final long run at N*
 return N*
 ```
 
@@ -301,8 +327,8 @@ hyperparameters) serves as the baseline that isolates the distillation gain.
 | contrastive negatives $M$ | $10$ |
 | contrastive temperature $\tau$ | $0.07$ (constant; schedule is an optional ablation) |
 | loss weight $\lambda_g$ | $\approx 1000$ (regression) / $\approx 1$ (contrastive), to match scales |
-| relational order $N$ | chosen by binary search; budget $E=1024 \Rightarrow N\le 17$ at $K=128$ |
+| relational order $N$ | log-spaced sweep up to the budget ceiling; $E=1024 \Rightarrow N_{\max}=17$ at $K=128$ |
 
 Each (objective $\times$ embedding) combination is run separately, and within
-each the order $N$ is selected by the binary search of Algorithm 4 on the
-validation top-1.
+each the order $N$ is selected by the budget-bounded log-spaced sweep of
+Algorithm 4 on the validation top-1.

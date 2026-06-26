@@ -31,7 +31,7 @@ __all__ = [
     "unique_graphs", "ordered_tuples", "permutation_reduction",
     "step_edge_cost", "largest_feasible_n", "find_best_n",
     "find_knee_n", "derive_scaling_rule", "plot_unique_graphs",
-    "adaptive_num_graphs",
+    "adaptive_num_graphs", "log_spaced_orders", "select_order",
 ]
 
 
@@ -142,6 +142,42 @@ def find_best_n(batch_size: int, edge_budget: float, scheme: str = "partition",
         def feasible_fn(N):
             return step_edge_cost(batch_size, N, scheme, graphs_per_step) <= edge_budget
     return largest_feasible_n(feasible_fn, n_min, n_max)
+
+
+def log_spaced_orders(n_min: int, n_max: int, base: int = 2):
+    """Candidatos de N espaçados em log (geométricos) em [n_min, n_max].
+
+    Ex.: n_min=2, n_max=17 -> [2, 4, 8, 16, 17]. São ~log_base(n_max) pontos
+    (mesmo orçamento da busca binária), mas revelam a FORMA da curva qualidade-N
+    e não assumem monotonicidade.
+    """
+    if n_max < n_min:
+        return []
+    orders, n = [], n_min
+    while n < n_max:
+        orders.append(int(n))
+        n *= base
+    orders.append(int(n_max))
+    return sorted({o for o in orders if n_min <= o <= n_max})
+
+
+def select_order(orders, means, sems=None, rule: str = "argmax") -> int:
+    """Escolhe N a partir das qualidades medidas (top-1 de validação).
+
+    ``argmax``: N com a maior média.
+    ``1se``   : menor N cuja média esteja a até 1 erro-padrão do melhor
+                (regra do 1-erro-padrão: parcimônia — N menor é mais barato —
+                sem perda estatisticamente significativa). Requer ``sems`` e
+                ``orders`` em ordem crescente.
+    """
+    best_i = max(range(len(orders)), key=lambda i: means[i])
+    if rule == "argmax" or sems is None:
+        return int(orders[best_i])
+    threshold = means[best_i] - sems[best_i]
+    for i in range(len(orders)):            # orders crescente -> menor N elegível
+        if means[i] >= threshold:
+            return int(orders[i])
+    return int(orders[best_i])
 
 
 def find_knee_n(quality_fn: Callable[[int], float], lo: int = 2, hi: int = 128,

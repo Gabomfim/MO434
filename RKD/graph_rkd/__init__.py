@@ -2,6 +2,8 @@ from .node_search import (
     adaptive_num_graphs,
     derive_scaling_rule,
     find_best_n,
+    log_spaced_orders,
+    select_order,
     find_knee_n,
     largest_feasible_n,
     ordered_tuples,

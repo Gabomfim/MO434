@@ -200,10 +200,15 @@ Notas de implementação (vs. o protocolo de referência):
 `--graph_rkd_nodes N`, `--graph_rkd_ratio`, `--num_negatives`, `--temperature`),
 somada à loss padrão (CE + Hinton KD). Distância euclidiana.
 
-O orquestrador `run_graph_rkd_search.py` roda, para cada (modo × método), a
-**busca binária de N**: teto por orçamento (`find_best_n`) e "joelho" por
-qualidade de **validação** (`find_knee_n`), com uma run curta por candidato e
-uma run longa no N escolhido.
+O orquestrador `run_graph_rkd_search.py` escolhe N, para cada (modo × método),
+por uma **varredura log limitada por orçamento** (substitui a antiga busca
+binária por qualidade): (1) teto `N_max` por orçamento de compute via busca
+binária exata (`find_best_n`); (2) candidatos espaçados em log em `[n_min, N_max]`
+(`log_spaced_orders`, ~log₂N_max pontos); (3) cada candidato treinado com
+`--seeds` seed(s), qualidade = melhor top-1 de **validação** (média); (4) seleção
+por `--select {argmax,1se}` (1se = regra do 1-erro-padrão, parcimônia); (5) run
+longa no N escolhido. Busca binária na *qualidade* foi evitada: exige curva
+monótona/sem ruído, o que não se garante (ver `select_order`/`log_spaced_orders`).
 
 **Loss usada nos experimentos: só cross-entropy + a loss de grafo.** O
 orquestrador desliga KD, RKD-D, RKD-A e attention (`kd/dist/angle/at = 0`), então

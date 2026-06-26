@@ -34,6 +34,8 @@ cmd=(
   --graph_rkd_sampling log
   --graph_rkd_alpha 0.5
   --graph_rkd_gmax 64
+  --seeds 1
+  --select argmax
   --search_epochs 30
   --final_epochs 300
   --temp_schedule constant

@@ -1,18 +1,24 @@
-"""Orquestra experimentos Graph-RKD: busca binária sobre N (nº de nós) guiada
-pela QUALIDADE DE VALIDAÇÃO, para cada combinação (modo de loss × método de
-embedding). Cada candidato N dispara uma destilação real
-(distill_to_convnextmicro) com a loss padrão (CE + Hinton KD) + a loss de grafo.
+"""Orquestra experimentos Graph-RKD: escolhe N (nº de nós) por uma VARREDURA
+LOG limitada por orçamento, para cada (modo de loss × método de embedding).
 
-Loss padrão isolada: por padrão zeramos RKD-D/RKD-A/AT (--dist/--angle/--at = 0),
-pois a loss de grafo É a componente relacional sob teste. Assim a comparação
-mede o efeito da loss de grafo sobre uma base CE+KD limpa.
+Seleção de N (substitui a antiga busca binária por qualidade):
+  1) teto N_max por orçamento de compute — busca binária num predicado
+     monotônico/determinístico (find_best_n), exata e sem treino;
+  2) candidatos espaçados em log em [n_min, N_max] (log_spaced_orders) —
+     ~log2(N_max) pontos, mesmo orçamento da busca binária, mas que revelam a
+     FORMA da curva qualidade-N e não assumem monotonicidade;
+  3) cada candidato é treinado com --seeds seed(s); a qualidade é o melhor
+     top-1 de VALIDAÇÃO (nunca test), média sobre seeds;
+  4) seleção por argmax ou pela regra do 1-erro-padrão (--select);
+  5) run final longa (--final_epochs) no N escolhido.
 
-Busca de N: o teto vem da busca binária por orçamento (find_best_n, compute), e
-dentro de [2, teto] achamos o "joelho" por qualidade (find_knee_n). A qualidade
-de cada N é o melhor top-1 de VALIDAÇÃO (nunca test) de uma run curta
-(--search_epochs); ao final roda-se uma run longa (--final_epochs) no N escolhido.
+Por que não busca binária na qualidade: ela exige que a curva qualidade-N seja
+monótona/unimodal e sem ruído — nada disso é garantido (q(N) pode subir e
+descer, e cada ponto é uma estimativa ruidosa). A varredura log tem o mesmo
+custo e é robusta a isso.
 
-Distância euclidiana (padrão de pairwise_distance_matrix).
+Loss = só cross-entropy + a loss de grafo (RKD-D/RKD-A/AT/KD zerados por
+padrão). Distância euclidiana (padrão de pairwise_distance_matrix).
 
 Exemplo:
     python run_graph_rkd_search.py --teacher_arch resnet18 \
@@ -21,10 +27,10 @@ Exemplo:
 """
 
 import argparse
-import functools
+import statistics
 
 import distill_to_convnextmicro as distill
-from graph_rkd import find_best_n, find_knee_n
+from graph_rkd import find_best_n, log_spaced_orders, select_order
 
 
 def build_parser():
@@ -43,12 +49,16 @@ def build_parser():
     p.add_argument("--methods", nargs="+", default=["profile", "mds"],
                    choices=["profile", "mds"])
 
-    # busca de N
+    # busca de N: teto por orçamento (binária, exata) + varredura log + seleção
     p.add_argument("--edge_budget", type=float, default=1024.0,
                    help="orçamento (arestas/passo) p/ o teto de N via find_best_n")
     p.add_argument("--n_min", type=int, default=2)
-    p.add_argument("--rel_tol", type=float, default=0.01,
-                   help="ganho relativo mínimo de val top-1 ao dobrar N")
+    p.add_argument("--base", type=int, default=2,
+                   help="base do espaçamento log dos candidatos N")
+    p.add_argument("--seeds", type=int, default=1,
+                   help="seeds por candidato N (média p/ reduzir ruído)")
+    p.add_argument("--select", choices=["argmax", "1se"], default="argmax",
+                   help="regra de seleção de N a partir do val top-1")
     p.add_argument("--graph_rkd_ratio", type=float, default=None,
                    help="peso da loss de grafo (default por modo: reg=1000, contr=1)")
     p.add_argument("--graph_rkd_sampling", choices=["partition", "random", "log"],
@@ -95,7 +105,7 @@ def _default_ratio(mode):
     return 1000.0 if mode == "regression" else 1.0
 
 
-def run_one(opts, mode, method, n_nodes, epochs, tag):
+def run_one(opts, mode, method, n_nodes, epochs, tag, seed):
     """Roda uma destilação e devolve o melhor top-1 de VALIDAÇÃO."""
     ratio = opts.graph_rkd_ratio if opts.graph_rkd_ratio is not None \
         else _default_ratio(mode)
@@ -104,7 +114,7 @@ def run_one(opts, mode, method, n_nodes, epochs, tag):
         "teacher_arch": opts.teacher_arch,
         "teacher_load": opts.teacher_load,
         "teacher_artifact": opts.teacher_artifact,
-        "batch": opts.batch, "epochs": epochs, "lr": opts.lr, "seed": opts.seed,
+        "batch": opts.batch, "epochs": epochs, "lr": opts.lr, "seed": seed,
         "ce_ratio": opts.ce_ratio, "kd_ratio": opts.kd_ratio,
         "dist_ratio": opts.dist_ratio, "angle_ratio": opts.angle_ratio,
         "at_ratio": opts.at_ratio,
@@ -116,11 +126,11 @@ def run_one(opts, mode, method, n_nodes, epochs, tag):
         "temp_schedule": opts.temp_schedule, "temp_start": opts.temp_start,
         "temp_end": opts.temp_end,
         "amp": opts.amp,
-        "save_dir": f"{opts.save_root}/{mode}-{method}/N{n_nodes}-{tag}",
+        "save_dir": f"{opts.save_root}/{mode}-{method}/N{n_nodes}-{tag}-s{seed}",
         "wandb_project": opts.wandb_project, "wandb_entity": opts.wandb_entity,
         "wandb_mode": opts.wandb_mode,
         "wandb_group": f"{mode}-{method}-{opts.dataset}",
-        "wandb_run_name": f"{mode}-{method}-N{n_nodes}-{tag}",
+        "wandb_run_name": f"{mode}-{method}-N{n_nodes}-{tag}-s{seed}",
         "wandb_tags": ["graph-rkd", mode, method, tag, f"N{n_nodes}"],
     }
     result = distill.run_with_params(params)
@@ -128,22 +138,33 @@ def run_one(opts, mode, method, n_nodes, epochs, tag):
 
 
 def search_for(opts, mode, method):
+    # 1) Teto por orçamento de compute: busca binária (predicado monotônico, exato).
     n_max = find_best_n(opts.batch, edge_budget=opts.edge_budget, n_min=opts.n_min)
     n_max = n_max or opts.n_min
-    print(f"\n### {mode} / {method}: buscando N em [{opts.n_min}, {n_max}] "
-          f"(teto por orçamento) ###")
+    # 2) Candidatos espaçados em log dentro de [n_min, n_max].
+    candidates = log_spaced_orders(opts.n_min, n_max, base=opts.base)
+    print(f"\n### {mode} / {method}: varrendo N em {candidates} "
+          f"(teto={n_max} por orçamento; {opts.seeds} seed(s)/candidato) ###")
 
-    @functools.lru_cache(maxsize=None)
-    def quality(n):
-        q = run_one(opts, mode, method, n, opts.search_epochs, tag="search")
-        print(f"   [{mode}/{method}] N={n} -> val top1={q*100:.2f}")
-        return q
+    # 3) Qualidade de validação de cada candidato, média sobre seeds.
+    means, sems = [], []
+    for N in candidates:
+        vals = [run_one(opts, mode, method, N, opts.search_epochs, "search", s)
+                for s in range(opts.seeds)]
+        mean = statistics.fmean(vals)
+        sem = (statistics.pstdev(vals) / (len(vals) ** 0.5)) if len(vals) > 1 else 0.0
+        means.append(mean)
+        sems.append(sem)
+        print(f"   [{mode}/{method}] N={N} -> val top1={mean*100:.2f} "
+              f"(+/-{sem*100:.2f}, n={opts.seeds})")
 
-    best_n = find_knee_n(quality, lo=opts.n_min, hi=n_max, rel_tol=opts.rel_tol)
-    # run final (longa) no N escolhido
-    final_val = run_one(opts, mode, method, best_n, opts.final_epochs, tag="final")
-    return {"best_N": best_n, "n_max": n_max,
-            "search_val_at_best": quality(best_n), "final_val": final_val}
+    # 4) Seleção (argmax ou regra do 1-erro-padrão).
+    best_n = select_order(candidates, means, sems, rule=opts.select)
+    best_search_val = means[candidates.index(best_n)]
+    # 5) Run final (longa) no N escolhido.
+    final_val = run_one(opts, mode, method, best_n, opts.final_epochs, "final", opts.seed)
+    return {"best_N": best_n, "n_max": n_max, "candidates": candidates,
+            "search_val_at_best": best_search_val, "final_val": final_val}
 
 
 def main(argv=None):
