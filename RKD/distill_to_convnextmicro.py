@@ -134,10 +134,14 @@ def build_parser():
     p.add_argument("--wandb_project", default="convnextmicro-distill")
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_run_name", default=None)
+    p.add_argument("--wandb_id", default=None,
+                   help="id estável da run W&B (resume='allow' p/ retomar)")
     p.add_argument("--wandb_group", default=None, help="defaults to distill-<dataset>")
     p.add_argument("--wandb_mode", choices=["online", "offline", "disabled"],
                    default="online")
     p.add_argument("--wandb_tags", nargs="*", default=None)
+    p.add_argument("--resume", default=None,
+                   help="caminho do student_last.pth p/ retomar (tolerante a ausência)")
     return p
 
 
@@ -243,7 +247,8 @@ def run_experiment(opts):
         tags.extend(opts.wandb_tags)
     run = wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
                      name=opts.wandb_run_name, group=opts.wandb_group,
-                     mode=opts.wandb_mode, tags=tags, config=vars(opts))
+                     mode=opts.wandb_mode, tags=tags, id=opts.wandb_id,
+                     resume=("allow" if opts.wandb_id else None), config=vars(opts))
 
     student = ConvNextMicro(num_classes=opts.num_classes, drop_path=opts.drop_path,
                             dims=tuple(opts.dims), depths=tuple(opts.depths),
@@ -301,8 +306,18 @@ def run_experiment(opts):
 
     is_contrastive = (opts.graph_rkd_mode == "contrastive") and graph_criterion is not None
 
-    best_val_top1, best_state = 0.0, None
-    for epoch in range(1, opts.epochs + 1):
+    start_epoch, best_val_top1, best_state = 0, 0.0, None
+    if opts.resume and os.path.exists(opts.resume):
+        ckpt = torch.load(opts.resume, map_location=device)
+        student.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        start_epoch = ckpt["epoch"]
+        best_val_top1 = ckpt.get("best_val_top1", 0.0)
+        best_state = ckpt.get("best_state", None)
+        print(f"resumed from {opts.resume} at epoch {start_epoch + 1}")
+
+    for epoch in range(start_epoch + 1, opts.epochs + 1):
         student.train()
         # rotina de temperatura da destilação (atua na InfoNCE contrastiva)
         cur_temp = temperature_at(epoch, opts.epochs, opts.temp_start,
@@ -370,7 +385,12 @@ def run_experiment(opts):
         if opts.save_dir:
             os.makedirs(opts.save_dir, exist_ok=True)
             last_path = os.path.join(opts.save_dir, "student_last.pth")
-            torch.save(student.state_dict(), last_path)
+            # estado completo toda época (resume); ao W&B só best/last com TTL.
+            torch.save({"model": student.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "scheduler": scheduler.state_dict(), "epoch": epoch,
+                        "best_val_top1": best_val_top1, "best_state": best_state},
+                       last_path)
             # Local toda época; envia ao W&B só quando melhora (best) ou na
             # última época (last) -- sem alias epoch-N e com TTL -- para não
             # acumular uma versão por época e estourar o storage.

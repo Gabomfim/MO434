@@ -26,7 +26,9 @@ import finetune_classifier as finetune
 import train_convnextmicro as baseline_ce
 import distill_to_convnextmicro as distill
 import run_graph_rkd_search as gsearch
+from experiment_ledger import is_done, mark_done
 from graph_rkd import find_best_n, log_spaced_orders
+from wandb_artifacts import stable_run_id
 
 # baseline clássico -> (flag de razão, valor) ; demais razões relacionais = 0
 CLASSIC = {
@@ -59,7 +61,8 @@ def build_parser():
 
     # busca de N
     p.add_argument("--edge_budget", type=float, default=1024.0)
-    p.add_argument("--seeds", type=int, default=1)
+    p.add_argument("--seeds", type=int, default=3,
+                   help="seeds por candidato N na busca (R)")
     p.add_argument("--select", choices=["argmax", "1se"], default="argmax")
 
     # runtime / W&B
@@ -79,10 +82,16 @@ def _teacher_ckpt(opts, arch, ds):
     return os.path.join(opts.save_root, "teachers", f"{arch}-{ds}", "best.pth")
 
 
-def _run(label, fn, dry):
+def _run(label, save_dir, fn, dry):
+    """Roda uma etapa, pulando se já concluída (ledger). Resumível."""
+    if is_done(save_dir):
+        print(f">> SKIP (concluído): {label}")
+        return
     print(f">> {label}")
-    if not dry:
-        fn()
+    if dry:
+        return
+    result = fn()
+    mark_done(save_dir, {"label": label})
 
 
 def phase_teachers(opts, dry):
@@ -90,12 +99,15 @@ def phase_teachers(opts, dry):
     for ds in opts.datasets:
         for arch in opts.teachers:
             save_dir = os.path.join(opts.save_root, "teachers", f"{arch}-{ds}")
-            _run(f"finetune {arch} @ {ds}", lambda a=arch, d=ds, s=save_dir: finetune.run_with_params({
+            _run(f"finetune {arch} @ {ds}", save_dir,
+                 lambda a=arch, d=ds, s=save_dir: finetune.run_with_params({
                 "arch": a, "dataset": d, "data": opts.data,
                 "epochs": opts.finetune_epochs, "batch": opts.batch_teacher,
                 "amp": opts.amp, "seed": opts.seed, "save_dir": s,
+                "resume": os.path.join(s, "last.pth"),
                 "wandb_project": opts.teachers_project, "wandb_entity": opts.wandb_entity,
                 "wandb_mode": opts.wandb_mode, "wandb_run_name": f"{a}-{d}",
+                "wandb_id": stable_run_id(f"finetune-{a}-{d}"),
             }), dry)
 
 
@@ -103,12 +115,15 @@ def phase_ce_baseline(opts, dry):
     print("\n===== Fase 0b: baseline ConvNextMicro (só CE, do zero) =====")
     for ds in opts.datasets:
         save_dir = os.path.join(opts.save_root, "baseline_ce", ds)
-        _run(f"baseline-CE @ {ds}", lambda d=ds, s=save_dir: baseline_ce.run_with_params({
+        _run(f"baseline-CE @ {ds}", save_dir,
+             lambda d=ds, s=save_dir: baseline_ce.run_with_params({
             "dataset": d, "data": opts.data, "epochs": opts.student_epochs,
             "batch": opts.batch_student, "amp": opts.amp, "seed": opts.seed,
-            "save_dir": s, "wandb_project": opts.students_project,
+            "save_dir": s, "resume": os.path.join(s, "baseline_last.pth"),
+            "wandb_project": opts.students_project,
             "wandb_entity": opts.wandb_entity, "wandb_mode": opts.wandb_mode,
             "wandb_run_name": f"baseline-{d}", "wandb_group": f"baseline-{d}",
+            "wandb_id": stable_run_id(f"baseline-{d}"),
             "wandb_tags": ["baseline", "ce-only", d],
         }), dry)
 
@@ -123,17 +138,19 @@ def phase_classic(opts, dry):
                           "angle_ratio": 0.0, "at_ratio": 0.0}
                 ratios[ratio_key] = ratio_val
                 save_dir = os.path.join(opts.save_root, "classic", f"{name}-{arch}-{ds}")
-                _run(f"classic {name} ({arch} -> micro) @ {ds}",
+                _run(f"classic {name} ({arch} -> micro) @ {ds}", save_dir,
                      lambda a=arch, d=ds, s=save_dir, r=dict(ratios), nm=name, t=tck:
                      distill.run_with_params({
                          "dataset": d, "data": opts.data, "teacher_arch": a,
                          "teacher_load": t, "graph_rkd_mode": "off",
                          "epochs": opts.student_epochs, "batch": opts.batch_student,
                          "amp": opts.amp, "seed": opts.seed, "save_dir": s,
+                         "resume": os.path.join(s, "student_last.pth"),
                          "wandb_project": opts.students_project,
                          "wandb_entity": opts.wandb_entity, "wandb_mode": opts.wandb_mode,
                          "wandb_run_name": f"classic-{nm}-{a}-{d}",
                          "wandb_group": f"classic-{a}-{d}",
+                         "wandb_id": stable_run_id(f"classic-{nm}-{a}-{d}"),
                          "wandb_tags": ["classic", nm, a, d], **r}), dry)
 
 
@@ -142,6 +159,7 @@ def phase_graph(opts, dry):
     for ds in opts.datasets:
         for arch in opts.teachers:
             tck = _teacher_ckpt(opts, arch, ds)
+            block_dir = os.path.join(opts.save_root, "graph", f"{arch}-{ds}")
             args = [
                 "--dataset", ds, "--teacher_arch", arch, "--teacher_load", tck,
                 "--data", opts.data, "--batch", str(opts.batch_student),
@@ -151,7 +169,7 @@ def phase_graph(opts, dry):
                 "--seeds", str(opts.seeds), "--select", opts.select,
                 "--seed", str(opts.seed),
                 "--modes", *opts.objectives, "--methods", *opts.embeddings,
-                "--save_root", os.path.join(opts.save_root, "graph", f"{arch}-{ds}"),
+                "--save_root", block_dir,
                 "--wandb_project", opts.students_project,
                 "--wandb_mode", opts.wandb_mode,
             ]
@@ -159,9 +177,11 @@ def phase_graph(opts, dry):
                 args += ["--wandb_entity", opts.wandb_entity]
             if opts.amp:
                 args += ["--amp"]
+            # Marca o bloco só ao concluir TUDO; num crash no meio, gsearch
+            # re-entra e pula os sub-runs já cacheados (result.json).
             _run(f"graph-search ({arch} -> micro) @ {ds} "
                  f"[{len(opts.objectives)}x{len(opts.embeddings)} combos]",
-                 lambda a=list(args): gsearch.main(a), dry)
+                 block_dir, lambda a=list(args): gsearch.main(a), dry)
 
 
 def _print_plan(opts):

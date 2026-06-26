@@ -7,10 +7,20 @@ training can pull them directly instead of relying on a local path.
 """
 
 import glob
+import hashlib
 import os
 from datetime import timedelta
 
 import wandb
+
+
+def stable_run_id(name):
+    """ID de run W&B determinístico a partir de um nome estável.
+
+    Reusar o mesmo id (com resume='allow') faz um job reiniciado RETOMAR a mesma
+    run no W&B em vez de criar outra. 16 hex de sha1 -> seguro p/ id de run.
+    """
+    return hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
 
 
 def log_model_artifact(run, file_path, name, aliases=None, metadata=None,

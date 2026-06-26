@@ -30,7 +30,9 @@ import argparse
 import statistics
 
 import distill_to_convnextmicro as distill
+from experiment_ledger import load_result, mark_done
 from graph_rkd import find_best_n, log_spaced_orders, select_order
+from wandb_artifacts import stable_run_id
 
 
 def build_parser():
@@ -106,7 +108,17 @@ def _default_ratio(mode):
 
 
 def run_one(opts, mode, method, n_nodes, epochs, tag, seed):
-    """Roda uma destilação e devolve o melhor top-1 de VALIDAÇÃO."""
+    """Roda uma destilação e devolve o melhor top-1 de VALIDAÇÃO.
+
+    Resumível: se o save_dir já tem result.json, devolve o valor cacheado sem
+    re-treinar.
+    """
+    save_dir = f"{opts.save_root}/{mode}-{method}/N{n_nodes}-{tag}-s{seed}"
+    cached = load_result(save_dir)
+    if cached is not None:
+        print(f"   [skip|cache] {mode}/{method} N={n_nodes} {tag} s{seed} "
+              f"-> val top1={cached['best_val_top1']*100:.2f}")
+        return float(cached["best_val_top1"])
     ratio = opts.graph_rkd_ratio if opts.graph_rkd_ratio is not None \
         else _default_ratio(mode)
     params = {
@@ -126,15 +138,19 @@ def run_one(opts, mode, method, n_nodes, epochs, tag, seed):
         "temp_schedule": opts.temp_schedule, "temp_start": opts.temp_start,
         "temp_end": opts.temp_end,
         "amp": opts.amp,
-        "save_dir": f"{opts.save_root}/{mode}-{method}/N{n_nodes}-{tag}-s{seed}",
+        "save_dir": save_dir, "resume": f"{save_dir}/student_last.pth",
         "wandb_project": opts.wandb_project, "wandb_entity": opts.wandb_entity,
         "wandb_mode": opts.wandb_mode,
         "wandb_group": f"{mode}-{method}-{opts.dataset}",
         "wandb_run_name": f"{mode}-{method}-N{n_nodes}-{tag}-s{seed}",
+        "wandb_id": stable_run_id(
+            f"{opts.dataset}-{opts.teacher_arch}-{mode}-{method}-N{n_nodes}-{tag}-s{seed}"),
         "wandb_tags": ["graph-rkd", mode, method, tag, f"N{n_nodes}"],
     }
     result = distill.run_with_params(params)
-    return float(result["best_val_top1"])
+    val = float(result["best_val_top1"])
+    mark_done(save_dir, {"best_val_top1": val})
+    return val
 
 
 def search_for(opts, mode, method):

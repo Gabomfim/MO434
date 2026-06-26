@@ -77,11 +77,15 @@ def build_parser():
     p.add_argument("--wandb_project", default="convnextmicro-distill")
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_run_name", default=None)
+    p.add_argument("--wandb_id", default=None,
+                   help="id estável da run W&B (resume='allow' p/ retomar)")
     p.add_argument("--wandb_group", default=None,
                    help="defaults to baseline-<dataset>")
     p.add_argument("--wandb_mode", choices=["online", "offline", "disabled"],
                    default="online")
     p.add_argument("--wandb_tags", nargs="*", default=None)
+    p.add_argument("--resume", default=None,
+                   help="caminho do baseline_last.pth p/ retomar (tolerante a ausência)")
     return p
 
 
@@ -149,7 +153,8 @@ def run_experiment(opts):
         tags.extend(opts.wandb_tags)
     run = wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
                      name=opts.wandb_run_name, group=opts.wandb_group,
-                     mode=opts.wandb_mode, tags=tags, config=vars(opts))
+                     mode=opts.wandb_mode, tags=tags, id=opts.wandb_id,
+                     resume=("allow" if opts.wandb_id else None), config=vars(opts))
 
     model = ConvNextMicro(num_classes=opts.num_classes, drop_path=opts.drop_path,
                           dims=tuple(opts.dims), depths=tuple(opts.depths),
@@ -167,9 +172,18 @@ def run_experiment(opts):
         return model(images)  # apply_softmax=False -> logits
 
     art_name = "convnextmicro-baseline-%s" % opts.dataset
-    best_val_top1, best_state = 0.0, None
+    start_epoch, best_val_top1, best_state = 0, 0.0, None
+    if opts.resume and os.path.exists(opts.resume):
+        ckpt = torch.load(opts.resume, map_location=device)
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        start_epoch = ckpt["epoch"]
+        best_val_top1 = ckpt.get("best_val_top1", 0.0)
+        best_state = ckpt.get("best_state", None)
+        print(f"resumed from {opts.resume} at epoch {start_epoch + 1}")
 
-    for epoch in range(1, opts.epochs + 1):
+    for epoch in range(start_epoch + 1, opts.epochs + 1):
         model.train()
         running = 0.0
         pbar = tqdm(train_loader, ncols=90, desc=f"[Baseline {epoch}]")
@@ -218,10 +232,18 @@ def run_experiment(opts):
         if opts.save_dir:
             os.makedirs(opts.save_dir, exist_ok=True)
             last_path = os.path.join(opts.save_dir, "baseline_last.pth")
-            torch.save(model.state_dict(), last_path)
-            aliases = ["last", "epoch-%d" % epoch] + (["best"] if improved else [])
-            log_model_artifact(run, last_path, art_name, aliases=aliases,
-                               metadata={"epoch": epoch, **log_dict(metrics)})
+            # estado completo toda época (resume); ao W&B só best/last com TTL.
+            torch.save({"model": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "scheduler": scheduler.state_dict(), "epoch": epoch,
+                        "best_val_top1": best_val_top1, "best_state": best_state},
+                       last_path)
+            is_final = epoch == opts.epochs
+            if improved or is_final:
+                aliases = (["best"] if improved else []) + (["last"] if is_final else [])
+                log_model_artifact(run, last_path, art_name, aliases=aliases,
+                                   ttl_days=30,
+                                   metadata={"epoch": epoch, **log_dict(metrics)})
 
     # Métricas finais com o modelo que MAXIMIZA A GENERALIZAÇÃO (melhor val).
     if best_state is not None:

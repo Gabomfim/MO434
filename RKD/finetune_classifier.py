@@ -89,6 +89,8 @@ def build_parser():
     p.add_argument("--wandb_project", default="classifier-finetune")
     p.add_argument("--wandb_entity", default=None)
     p.add_argument("--wandb_run_name", default=None)
+    p.add_argument("--wandb_id", default=None,
+                   help="id estável da run W&B (resume='allow' p/ retomar)")
     p.add_argument("--wandb_group", default=None,
                    help="defaults to '<arch>-<dataset>'")
     p.add_argument("--wandb_mode", choices=["online", "offline", "disabled"],
@@ -201,18 +203,20 @@ def run_experiment(opts):
         tags.extend(opts.wandb_tags)
     run = wandb.init(project=opts.wandb_project, entity=opts.wandb_entity,
                      name=opts.wandb_run_name, group=opts.wandb_group,
-                     mode=opts.wandb_mode, tags=tags,
+                     mode=opts.wandb_mode, tags=tags, id=opts.wandb_id,
+                     resume=("allow" if opts.wandb_id else None),
                      config={**vars(opts), "device": device})
 
     start_epoch, best_val_top1, best_state = 0, 0.0, None
     art_name = "%s-%s" % (opts.arch, opts.dataset)
-    if opts.resume:
+    if opts.resume and os.path.exists(opts.resume):
         ckpt = torch.load(opts.resume, map_location=device)
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
         start_epoch = ckpt["epoch"] + 1
         best_val_top1 = ckpt.get("best_val_top1", 0.0)
+        best_state = ckpt.get("best_state", None)
         print(f"resumed from {opts.resume} at epoch {start_epoch}")
 
     for epoch in range(start_epoch, opts.epochs):
@@ -268,7 +272,7 @@ def run_experiment(opts):
             os.makedirs(opts.save_dir, exist_ok=True)
             state = {"model": model.state_dict(), "optimizer": optimizer.state_dict(),
                      "scheduler": scheduler.state_dict(), "epoch": epoch,
-                     "best_val_top1": best_val_top1}
+                     "best_val_top1": best_val_top1, "best_state": best_state}
             last_path = os.path.join(opts.save_dir, "last.pth")
             torch.save(state, last_path)
             # Local toda época (p/ --resume), mas só envia ao W&B quando melhora
