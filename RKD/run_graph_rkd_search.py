@@ -60,12 +60,18 @@ def build_parser():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--save_root", default="graph_rkd_runs")
 
-    # loss padrão (relacional clássico desligado por padrão)
+    # Loss = SÓ cross-entropy + a loss de grafo. KD/dist/angle/at desligados.
     p.add_argument("--ce_ratio", type=float, default=1.0)
-    p.add_argument("--kd_ratio", type=float, default=0.9)
+    p.add_argument("--kd_ratio", type=float, default=0.0)
     p.add_argument("--dist_ratio", type=float, default=0.0)
     p.add_argument("--angle_ratio", type=float, default=0.0)
     p.add_argument("--at_ratio", type=float, default=0.0)
+
+    # rotina de temperatura da destilação (InfoNCE contrastiva)
+    p.add_argument("--temp_schedule", choices=["constant", "linear", "cosine", "exp"],
+                   default="cosine")
+    p.add_argument("--temp_start", type=float, default=0.1)
+    p.add_argument("--temp_end", type=float, default=0.05)
 
     # wandb
     p.add_argument("--wandb_project", default="graph-rkd-node-search")
@@ -95,6 +101,8 @@ def run_one(opts, mode, method, n_nodes, epochs, tag):
         "at_ratio": opts.at_ratio,
         "graph_rkd_mode": mode, "graph_rkd_method": method,
         "graph_rkd_nodes": n_nodes, "graph_rkd_ratio": ratio,
+        "temp_schedule": opts.temp_schedule, "temp_start": opts.temp_start,
+        "temp_end": opts.temp_end,
         "amp": opts.amp,
         "save_dir": f"{opts.save_root}/{mode}-{method}/N{n_nodes}-{tag}",
         "wandb_project": opts.wandb_project, "wandb_entity": opts.wandb_entity,

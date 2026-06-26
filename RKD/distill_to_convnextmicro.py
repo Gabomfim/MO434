@@ -100,7 +100,13 @@ def build_parser():
     p.add_argument("--graph_rkd_graphs", type=int, default=None,
                    help="grafos/passo qdo sampling=random")
     p.add_argument("--num_negatives", type=int, default=10, help="contrastive")
-    p.add_argument("--temperature", type=float, default=0.07, help="contrastive")
+    p.add_argument("--temperature", type=float, default=0.07,
+                   help="temperatura inicial da InfoNCE contrastiva")
+    # rotina de temperatura da destilação ao longo do treino (atua na InfoNCE)
+    p.add_argument("--temp_schedule", choices=["constant", "linear", "cosine", "exp"],
+                   default="cosine")
+    p.add_argument("--temp_start", type=float, default=0.1)
+    p.add_argument("--temp_end", type=float, default=0.05)
 
     # optimization
     p.add_argument("--lr", type=float, default=1e-3)
@@ -160,6 +166,21 @@ def load_teacher(opts, run, device):
     teacher.eval()
     print(f"Loaded {opts.teacher_arch} teacher from {ckpt}")
     return teacher
+
+
+def temperature_at(epoch, total_epochs, t0, t1, shape="cosine"):
+    """Temperatura da destilação na época ``epoch`` (1..total), de t0 -> t1."""
+    p = (epoch - 1) / max(1, total_epochs - 1)
+    if shape == "constant":
+        return t0
+    if shape == "linear":
+        return t0 + (t1 - t0) * p
+    if shape == "cosine":
+        return t1 + 0.5 * (t0 - t1) * (1 + math.cos(math.pi * p))
+    if shape == "exp":
+        t0 = max(t0, 1e-8)
+        return t0 * (max(t1, 1e-8) / t0) ** p
+    raise ValueError("temp_schedule inválido")
 
 
 def build_scheduler(optimizer, opts, iters_per_epoch):
@@ -268,9 +289,16 @@ def run_experiment(opts):
     print("teacher: " + " | ".join(
         f"{s} top1={m['top1']*100:.2f}" for s, m in teacher_metrics.items()))
 
+    is_contrastive = (opts.graph_rkd_mode == "contrastive") and graph_criterion is not None
+
     best_val_top1, best_state = 0.0, None
     for epoch in range(1, opts.epochs + 1):
         student.train()
+        # rotina de temperatura da destilação (atua na InfoNCE contrastiva)
+        cur_temp = temperature_at(epoch, opts.epochs, opts.temp_start,
+                                  opts.temp_end, opts.temp_schedule)
+        if is_contrastive:
+            graph_criterion.nce.temperature = cur_temp
         sums = {"loss": 0, "ce": 0, "kd": 0, "dist": 0, "angle": 0, "at": 0, "graph": 0}
         pbar = tqdm(train_loader, ncols=100, desc=f"[Distill {epoch}]")
         for images, targets in pbar:
@@ -309,7 +337,7 @@ def run_experiment(opts):
         is_eval_epoch = (epoch % opts.eval_every == 0) or (epoch == opts.epochs)
         if not is_eval_epoch:
             run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
-                     **loss_log}, step=epoch)
+                     "train/graph_temperature": cur_temp, **loss_log}, step=epoch)
             continue
 
         # Mesmas métricas (top-1/top-5) em train, val e test (aluno).
@@ -326,8 +354,8 @@ def run_experiment(opts):
               f"val@1={val_top1*100:.2f} test@1={metrics['test']['top1']*100:.2f} "
               f"best_val@1={best_val_top1*100:.2f}")
         run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
-                 "val/best_top1": best_val_top1, **loss_log,
-                 **log_dict(metrics)}, step=epoch)
+                 "val/best_top1": best_val_top1, "train/graph_temperature": cur_temp,
+                 **loss_log, **log_dict(metrics)}, step=epoch)
 
         if opts.save_dir:
             os.makedirs(opts.save_dir, exist_ok=True)

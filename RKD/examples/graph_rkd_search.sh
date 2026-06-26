@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Experimentos Graph-RKD: para cada (modo de loss × método de embedding),
 # busca binária do melhor N (guiada por top-1 de validação) e roda a destilação
-# = loss padrão (CE + Hinton KD) + loss de grafo de N nós (distância euclidiana).
+# = SÓ cross-entropy + loss de grafo de N nós (distância euclidiana). Sem KD,
+# dist, angle, quad nem attention. A temperatura da destilação (InfoNCE) varia
+# ao longo do treino (--temp_schedule).
 #
 # Uso:
 #   TEACHER_ARCH=resnet18 DATASET=cub200 bash examples/graph_rkd_search.sh
@@ -31,6 +33,9 @@ cmd=(
   --methods profile mds
   --search_epochs 30
   --final_epochs 300
+  --temp_schedule cosine
+  --temp_start 0.1
+  --temp_end 0.05
   --amp
   --wandb_project "graph-rkd-node-search"
   --wandb_mode online

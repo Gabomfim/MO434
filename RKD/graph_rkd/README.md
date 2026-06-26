@@ -172,8 +172,16 @@ somada à loss padrão (CE + Hinton KD). Distância euclidiana.
 O orquestrador `run_graph_rkd_search.py` roda, para cada (modo × método), a
 **busca binária de N**: teto por orçamento (`find_best_n`) e "joelho" por
 qualidade de **validação** (`find_knee_n`), com uma run curta por candidato e
-uma run longa no N escolhido. Para isolar o efeito da loss de grafo, ele zera
-RKD-D/RKD-A/AT (a loss de grafo é a componente relacional sob teste).
+uma run longa no N escolhido.
+
+**Loss usada nos experimentos: só cross-entropy + a loss de grafo.** O
+orquestrador desliga KD, RKD-D, RKD-A e attention (`kd/dist/angle/at = 0`), então
+a única componente relacional é a do grafo.
+
+**Rotina de temperatura da destilação:** a temperatura da InfoNCE contrastiva
+varia ao longo do treino (`--temp_schedule {constant,linear,cosine,exp}`,
+`--temp_start`, `--temp_end`; padrão cosine 0.1→0.05), logada em
+`train/graph_temperature`. (No modo `regression` não há temperatura.)
 
 ```bash
 TEACHER_ARCH=resnet18 DATASET=cub200 bash examples/graph_rkd_search.sh
