@@ -131,6 +131,37 @@ Para plugar no `distill_to_convnextmicro.py`: use os embeddings agrupados do
 aluno/professor (`forward_features(...)["embedding"]`) e some `graph_rkd_ratio *
 loss_graph` à perda total — no lugar de (ou junto com) `dist_ratio`/`angle_ratio`.
 
+## Perda contrastiva por amostragem (InfoNCE) — `contrastive.py`
+
+Alternativa **leve e contrastiva** à regressão acima (estilo GraphSAGE/PinSage/
+CRD): o custo é **O(G·M)** (G grafos, M negativos), independente do espaço de
+grafos. Importante: a `GraphRKDLoss` por regressão **já é O(G)** — o ganho do
+contraste não é evitar fatorial (nunca enumeramos C(B,N)), e sim (a) limitar as
+comparações *entre* grafos a M negativos e (b) o objetivo contrastivo costuma
+destilar melhor que regressão (CRD).
+
+Enquadramento **cross-model** (destilação): âncora = grafo i do *student*;
+positivo = mesmo grafo i do *teacher*; negativos = M grafos j≠i do *teacher*
+(amostrados). Como o embedding do grafo só depende de N, âncora e positivo
+estão no mesmo espaço (cosseno direto).
+
+```python
+from graph_rkd import GraphContrastiveDistillLoss, find_best_n
+N = find_best_n(128, edge_budget=1024)
+crit = GraphContrastiveDistillLoss(method="profile", n_nodes=N,
+                                   num_negatives=10, temperature=0.07)
+loss_graph = crit(student_emb, teacher_emb)        # (B, d) cada
+```
+
+Notas de implementação (vs. o protocolo de referência):
+- **Vetorizado** (sem `for` por amostra): negativos via `randint (A, M)` + gather.
+- **InfoNCE estável** com `cross_entropy(logits, 0)` — provado idêntico à
+  fórmula `-log(pos/(pos+Σneg))` sobre os mesmos negativos (selftest).
+- **`exclude_index`**: evita sortear o próprio positivo como negativo (viés que o
+  `torch.randint` cru do protocolo de referência tem).
+- `SampledGraphContrastiveLoss(temperature, num_negative_samples)` é a classe
+  genérica com a assinatura `(anchor, positive, pool)` pedida.
+
 ## API
 
 Escolha de N / combinatória:
@@ -146,7 +177,8 @@ Embeddings de grafo / perda:
 - `pairwise_distance_matrix(node_emb, squared)` / `normalize_distance_matrix(D)`
 - `node_profile_embedding(D, sort_key, normalize)` (Método 1)
 - `mds_spectral_embedding(D, normalize, jitter)` (Método 2)
-- `node_profile_embedding_np(D)` (referência numpy)
-- `sample_graphs(B, n_nodes, sampling, ...)` / `GraphRKDLoss(...)`
+- `node_profile_embedding_np(D)` (referência numpy) / `embed_graphs(...)`
+- `sample_graphs(B, n_nodes, sampling, ...)` / `GraphRKDLoss(...)` (regressão)
+- `SampledGraphContrastiveLoss(...)` / `GraphContrastiveDistillLoss(...)` (InfoNCE)
 
 Demo: `python graph_rkd/node_search.py` · Testes: `python -m graph_rkd.selftest`.

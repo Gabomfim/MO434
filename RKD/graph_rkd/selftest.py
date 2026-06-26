@@ -4,8 +4,12 @@ diferenciabilidade e a perda Graph-RKD. Rode: python graph_rkd/selftest.py"""
 import numpy as np
 import torch
 
+import torch.nn.functional as F
+
 from graph_rkd import (
+    GraphContrastiveDistillLoss,
     GraphRKDLoss,
+    SampledGraphContrastiveLoss,
     mds_spectral_embedding,
     node_profile_embedding,
     node_profile_embedding_np,
@@ -113,6 +117,51 @@ def test_graph_rkd_loss():
     assert loss_same.item() < 1e-6
 
 
+def test_infonce_matches_reference_formula():
+    # Vetorizado (cross_entropy) deve igualar -log(pos/(pos+Σneg)) sobre OS MESMOS
+    # negativos. Fixamos os negativos passando um pool e gerador idêntico.
+    torch.manual_seed(0)
+    A, E, P, M = 5, 16, 40, 8
+    anchor = torch.randn(A, E)
+    positive = anchor + 0.1 * torch.randn(A, E)
+    pool = torch.randn(P, E)
+    tau = 0.1
+
+    a = F.normalize(anchor, dim=-1)
+    p = F.normalize(positive, dim=-1)
+    pooln = F.normalize(pool, dim=-1)
+    gen = torch.Generator().manual_seed(123)
+    neg_idx = torch.randint(0, P, (A, M), generator=gen)
+    pos_sim = torch.exp((a * p).sum(-1) / tau)
+    neg = pooln[neg_idx]
+    neg_sim = torch.exp((a.unsqueeze(1) * neg).sum(-1) / tau).sum(1)
+    ref = (-torch.log(pos_sim / (pos_sim + neg_sim))).mean()
+
+    gen2 = torch.Generator().manual_seed(123)
+    mine = SampledGraphContrastiveLoss(temperature=tau, num_negative_samples=M)(
+        anchor, positive, pool, generator=gen2)
+    print(f"[infonce] vetorizado={mine.item():.6f} vs formula ref={ref.item():.6f}")
+    assert abs(mine.item() - ref.item()) < 1e-5
+
+
+def test_contrastive_distill():
+    torch.manual_seed(0)
+    B, ds, dt = 48, 16, 24
+    student = torch.randn(B, ds, requires_grad=True)
+    teacher = torch.randn(B, dt)
+    gen = torch.Generator().manual_seed(0)
+    graphs = sample_graphs(B, n_nodes=8, sampling="partition", generator=gen)
+    for method in ("profile", "mds"):
+        loss_fn = GraphContrastiveDistillLoss(method=method, n_nodes=8,
+                                              num_negatives=5)
+        g0 = torch.Generator().manual_seed(7)
+        loss = loss_fn(student, teacher, graphs=graphs, generator=g0)
+        grad, = torch.autograd.grad(loss, student, retain_graph=True)
+        print(f"[contrastive/{method}] loss={loss.item():.4f} "
+              f"grad_norm={grad.norm().item():.4f}")
+        assert loss.item() > 0 and torch.isfinite(grad).all() and grad.norm() > 0
+
+
 if __name__ == "__main__":
     test_numpy_reference_validation()
     test_torch_parity_with_numpy()
@@ -120,4 +169,6 @@ if __name__ == "__main__":
     test_mean_sort_can_break_invariance()
     test_differentiability()
     test_graph_rkd_loss()
+    test_infonce_matches_reference_formula()
+    test_contrastive_distill()
     print("\nTODOS OS TESTES PASSARAM.")

@@ -10,6 +10,7 @@ from .node_search import (
     unique_graphs,
 )
 from .embeddings import (
+    embed_graphs,
     mds_spectral_embedding,
     node_profile_embedding,
     node_profile_embedding_np,
@@ -17,3 +18,4 @@ from .embeddings import (
     pairwise_distance_matrix,
 )
 from .loss import GraphRKDLoss, sample_graphs
+from .contrastive import GraphContrastiveDistillLoss, SampledGraphContrastiveLoss

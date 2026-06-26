@@ -17,11 +17,7 @@ tuplas). N vem da busca binária (ver node_search.find_best_n).
 import torch
 import torch.nn as nn
 
-from .embeddings import (
-    mds_spectral_embedding,
-    node_profile_embedding,
-    pairwise_distance_matrix,
-)
+from .embeddings import embed_graphs
 
 __all__ = ["GraphRKDLoss", "sample_graphs"]
 
@@ -80,12 +76,9 @@ class GraphRKDLoss(nn.Module):
         self.sort_key = sort_key
 
     def _embed(self, node_emb_graphs):
-        # node_emb_graphs: (G, N, d) -> matriz (G, N, N) -> embedding (G, *)
-        D = pairwise_distance_matrix(node_emb_graphs, squared=self.squared)
-        if self.method == "profile":
-            return node_profile_embedding(D, sort_key=self.sort_key,
-                                          normalize=self.normalize)
-        return mds_spectral_embedding(D, normalize=self.normalize)
+        return embed_graphs(node_emb_graphs, method=self.method,
+                            normalize=self.normalize, squared=self.squared,
+                            sort_key=self.sort_key)
 
     def forward(self, student_emb, teacher_emb, graphs=None, generator=None):
         """student_emb/teacher_emb: ``(B, d)``. ``graphs`` opcional ``(G, N)``;

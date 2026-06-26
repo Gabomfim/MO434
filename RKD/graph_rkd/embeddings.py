@@ -25,7 +25,7 @@ import torch
 __all__ = [
     "pairwise_distance_matrix", "normalize_distance_matrix",
     "node_profile_embedding", "mds_spectral_embedding",
-    "node_profile_embedding_np",
+    "node_profile_embedding_np", "embed_graphs",
 ]
 
 
@@ -122,6 +122,22 @@ def mds_spectral_embedding(D, normalize=False, jitter=0.0):
     eig = torch.linalg.eigvalsh(B)                  # crescente
     eig = eig.flip(-1)                              # decrescente
     return eig.squeeze(0) if single else eig
+
+
+def embed_graphs(node_emb_graphs, method="profile", normalize=True, squared=False,
+                 sort_key="lex"):
+    """Embeddings de nós por grafo ``(G, N, d)`` -> embedding do grafo ``(G, *)``.
+
+    method ``"profile"`` -> tamanho N·(N-1); ``"mds"`` -> tamanho N. O tamanho
+    depende SÓ de N (não da dimensão dos features), então embeddings de
+    teacher e student do mesmo grafo são diretamente comparáveis.
+    """
+    D = pairwise_distance_matrix(node_emb_graphs, squared=squared)
+    if method == "profile":
+        return node_profile_embedding(D, sort_key=sort_key, normalize=normalize)
+    if method == "mds":
+        return mds_spectral_embedding(D, normalize=normalize)
+    raise ValueError("method deve ser 'profile' ou 'mds'")
 
 
 # --------------------------------------------------------------------------- #
