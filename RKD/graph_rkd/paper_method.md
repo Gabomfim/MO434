@@ -166,3 +166,143 @@ evaluations; when quality exhibits diminishing returns rather than strict
 monotonicity, the same binary search locates the "knee" of the validation-quality
 curve, using the student's validation accuracy at each candidate $N$ as the
 search signal.
+
+## Algorithms
+
+**Algorithm 1 — Permutation-invariant graph embedding.** Maps an $N\times N$
+dissimilarity matrix to a fixed-length, order-invariant descriptor.
+
+```
+Input : D in R^{N x N} (distances); method in {profile, mds}; normalize
+if normalize:                       # scale-invariance (teacher vs student)
+    D <- D / mean_{i != j} D_ij
+if method = profile:
+    for each row i:
+        p_i <- sort_ascending({ D_ij : j != i })      # neighborhood profile
+    order <- lexicographic_argsort(p_1, ..., p_N)      # canonical node order
+    return flatten([ p_order(1) ; ... ; p_order(N) ])  # in R^{N(N-1)}
+else:                               # mds (classical MDS spectrum)
+    J <- I - (1/N) * 1 1^T
+    B <- -1/2 * J (D ⊙ D) J                            # double-centered Gram
+    return eigenvalues(B) sorted descending            # in R^{N}
+```
+
+**Algorithm 2 — Adaptive graph sampling.** Number of graphs grows with the
+Pascal-row size $\binom{K}{N}$ via its description length.
+
+```
+Input : batch size K, order N, alpha, g_min (default floor(K/N)), g_max
+G <- round( alpha * log2( C(K, N) ) )
+G <- clamp(G, g_min, g_max)
+return G random N-subsets of {1, ..., K}   # (or floor(K/N) disjoint, if partition)
+```
+
+**Algorithm 3 — Graph-RKD distillation step.** Standard cross-entropy plus the
+relational graph loss; teacher is frozen.
+
+```
+Input : student f_s, teacher f_t, minibatch (X, y), order N, weight lambda_g,
+        objective in {regression, contrastive}, p, M, tau
+Z_s <- f_s.features(X)                       # node embeddings (B x d_s)
+Z_t <- f_t.features(X)   (no grad)           # node embeddings (B x d_t)
+{ S_1, ..., S_G } <- sample graphs (Algorithm 2)
+for g = 1 .. G:                              # same node set on both sides
+    e_s[g] <- GraphEmbedding( pdist_euclid(Z_s[S_g]) )      # Algorithm 1
+    e_t[g] <- GraphEmbedding( pdist_euclid(Z_t[S_g]) )      # (no grad)
+if objective = regression:
+    L_rel <- mean_g  || e_s[g] - e_t[g] ||_p
+else:                                        # contrastive (InfoNCE, CRD-style)
+    for g: logits <- [ sim(e_s[g], e_t[g]) ,  { sim(e_s[g], e_t[h]) : h in negs(g, M) } ] / tau
+    L_rel <- mean_g  CrossEntropy(logits, target = 0)       # positive at index 0
+L <- CrossEntropy(f_s(X), y) + lambda_g * L_rel
+backprop and update f_s
+```
+
+**Algorithm 4 — Selecting $N$ by binary search.** Feasibility ceiling from the
+compute budget, then the validation-quality knee.
+
+```
+Input : batch K, edge budget E, n_min, rel_tol; quality q(N) = best val top-1
+        of a short distillation run with order N
+N_max <- largest N with K (N-1)/2 <= E       # binary search on monotone feasibility
+lo <- n_min; hi <- N_max; N* <- lo
+while lo <= hi:                               # knee under diminishing returns
+    mid <- floor((lo + hi) / 2)
+    if (q(mid) - q(floor(mid/2))) / q(floor(mid/2)) >= rel_tol:
+        N* <- mid; lo <- mid + 1
+    else:
+        hi <- mid - 1
+return N*
+```
+
+## Datasets and splits
+
+We evaluate on two standard fine-grained image-classification benchmarks.
+**Stanford Cars-196** (Krause et al., 2013) contains $16{,}185$ images of $196$
+car models, with an official split of $8{,}144$ training and $8{,}041$ test
+images. **Caltech-UCSD Birds-200-2011 (CUB-200)** (Wah et al., 2011) contains
+$11{,}788$ images of $200$ bird species, with an official split of $5{,}994$
+training and $5{,}794$ test images (given by `train_test_split.txt`).
+
+For both datasets we use the **official classification split**, in which all
+classes appear in both training and test sets — not the disjoint
+metric-learning split (in which train and test classes are non-overlapping) used
+by retrieval-oriented RKD. Because neither dataset ships a validation set, we
+derive one by holding out a **class-stratified $10\%$ of the training set** with
+a fixed seed. All hyperparameter selection — the checkpoint kept for final
+evaluation, the relational order $N$, and any temperature schedule — relies
+**only on this validation split**; the official test set is read once, with the
+validation-selected checkpoint, and the same top-1 / top-5 metrics are reported
+on train, validation, and test.
+
+## Preprocessing and data augmentation
+
+All images are processed as $224\times224$ RGB tensors. During **training** we
+apply `RandomResizedCrop(224)` followed by a random horizontal flip; at
+**evaluation** (validation and test) we resize the shorter side to $256$ and take
+a central $224$ crop. In both cases pixels are scaled to $[0,1]$ and normalized
+with ImageNet statistics (mean $(0.485, 0.456, 0.406)$, std
+$(0.229, 0.224, 0.225)$), matching the ImageNet-pretrained teachers. We
+deliberately **do not** use mixup or cutmix in the distillation runs: mixing
+samples would destroy the per-example correspondence that the graph loss needs to
+pair student and teacher on identical node sets. Pairwise edge weights are
+Euclidean distances between embeddings, and each graph's distance matrix is
+normalized by its mean edge weight before embedding.
+
+## Training configuration
+
+**Teacher fine-tuning.** Teachers are ImageNet-1k pretrained backbones —
+ResNet-18 or ConvNeXt-Tiny — with the classification head replaced by a fresh
+$C$-way layer ($C\in\{196,200\}$). The backbone and the new head use different
+learning rates (head $\times 10$, since it trains from scratch). ResNet-18 uses
+SGD (Nesterov, momentum $0.9$, weight decay $10^{-4}$, base lr $0.01$);
+ConvNeXt-Tiny uses AdamW (weight decay $0.05$, base lr $10^{-4}$). Both run for
+$60$ epochs, batch size $64$, cosine schedule with a $3$-epoch linear warmup,
+label smoothing $0.1$, and mixed precision.
+
+**Student distillation.** The student is **ConvNextMicro** (dims
+$(24,48,96,192)$, depths $(1,1,3,1)$, $\approx 0.67$M parameters), trained from
+scratch with **cross-entropy plus the graph loss only** — Hinton KD,
+RKD-distance, RKD-angle, and attention transfer are all disabled. Optimization
+uses AdamW (lr $10^{-3}$, weight decay $0.05$, $\beta=(0.9,0.999)$), a cosine
+schedule with a $20$-epoch linear warmup, $300$ epochs, batch size $K=128$,
+stochastic depth $0.1$, label smoothing $0.1$, and mixed precision. A
+from-scratch ConvNextMicro trained with cross-entropy alone (identical
+hyperparameters) serves as the baseline that isolates the distillation gain.
+
+**Graph loss.** Default values:
+
+| Hyperparameter | Value |
+|---|---|
+| edge metric | Euclidean (distance matrix mean-normalized) |
+| embedding | `profile` ($\in\mathbb{R}^{N(N-1)}$) or `mds` ($\in\mathbb{R}^{N}$) |
+| objective | `regression` (Minkowski, $p=2$) or `contrastive` (InfoNCE) |
+| sampling | adaptive `log`: $\alpha=0.5$, $g_{\min}=\lfloor K/N\rfloor$, $g_{\max}=64$ |
+| contrastive negatives $M$ | $10$ |
+| contrastive temperature $\tau$ | $0.07$ (constant; schedule is an optional ablation) |
+| loss weight $\lambda_g$ | $\approx 1000$ (regression) / $\approx 1$ (contrastive), to match scales |
+| relational order $N$ | chosen by binary search; budget $E=1024 \Rightarrow N\le 17$ at $K=128$ |
+
+Each (objective $\times$ embedding) combination is run separately, and within
+each the order $N$ is selected by the binary search of Algorithm 4 on the
+validation top-1.
