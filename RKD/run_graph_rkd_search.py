@@ -69,6 +69,8 @@ def build_parser():
                    help="sampling=log: G = alpha*log2(C(K,N))")
     p.add_argument("--graph_rkd_gmax", type=int, default=64,
                    help="sampling=log: teto de grafos/passo (custo)")
+    p.add_argument("--graph_warmup_frac", type=float, default=0.0,
+                   help="warmup do peso da loss de grafo (fração das épocas)")
 
     # treino
     p.add_argument("--search_epochs", type=int, default=30)
@@ -135,6 +137,7 @@ def run_one(opts, mode, method, n_nodes, epochs, tag, seed):
         "graph_rkd_sampling": opts.graph_rkd_sampling,
         "graph_rkd_alpha": opts.graph_rkd_alpha,
         "graph_rkd_gmax": opts.graph_rkd_gmax,
+        "graph_warmup_frac": opts.graph_warmup_frac,
         "temp_schedule": opts.temp_schedule, "temp_start": opts.temp_start,
         "temp_end": opts.temp_end,
         "amp": opts.amp,

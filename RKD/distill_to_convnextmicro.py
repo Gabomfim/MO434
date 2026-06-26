@@ -95,6 +95,9 @@ def build_parser():
     p.add_argument("--graph_rkd_method", choices=["profile", "mds"], default="profile")
     p.add_argument("--graph_rkd_nodes", type=int, default=8, help="N (busca binária)")
     p.add_argument("--graph_rkd_ratio", type=float, default=0.0)
+    p.add_argument("--graph_warmup_frac", type=float, default=0.0,
+                   help="ramp linear do peso da loss de grafo (0->ratio) na fração "
+                        "inicial das épocas; balanceia CE vs grafo. 0 = sem warmup")
     p.add_argument("--graph_rkd_sampling", choices=["partition", "random", "log"],
                    default="log")
     p.add_argument("--graph_rkd_graphs", type=int, default=None,
@@ -176,6 +179,17 @@ def load_teacher(opts, run, device):
     teacher.eval()
     print(f"Loaded {opts.teacher_arch} teacher from {ckpt}")
     return teacher
+
+
+def graph_ratio_at(epoch, total_epochs, target, warmup_frac):
+    """Peso da loss de grafo na época `epoch`: rampa linear 0->target na fração
+    inicial `warmup_frac` das épocas; depois constante. Balanceia CE vs grafo
+    (cedo os embeddings do aluno são ruído -> matar a geometria do teacher cedo
+    é sinal ruidoso, então entramos com ela aos poucos)."""
+    if warmup_frac <= 0:
+        return target
+    w = max(1, int(warmup_frac * total_epochs))
+    return target * min(1.0, epoch / w)
 
 
 def temperature_at(epoch, total_epochs, t0, t1, shape="cosine"):
@@ -324,6 +338,9 @@ def run_experiment(opts):
                                   opts.temp_end, opts.temp_schedule)
         if is_contrastive:
             graph_criterion.nce.temperature = cur_temp
+        # peso da loss de grafo nesta época (warmup p/ balancear CE vs grafo)
+        cur_graph_ratio = graph_ratio_at(epoch, opts.epochs, opts.graph_rkd_ratio,
+                                         opts.graph_warmup_frac)
         sums = {"loss": 0, "ce": 0, "kd": 0, "dist": 0, "angle": 0, "at": 0, "graph": 0}
         pbar = tqdm(train_loader, ncols=100, desc=f"[Distill {epoch}]")
         for images, targets in pbar:
@@ -338,7 +355,7 @@ def run_experiment(opts):
                 dist = opts.dist_ratio * dist_criterion(s_emb, t["embedding"])
                 angle = opts.angle_ratio * angle_criterion(s_emb, t["embedding"])
                 at = opts.at_ratio * at_criterion(s_s2, t["stage2"])
-                graph = (opts.graph_rkd_ratio * graph_criterion(s_emb, t["embedding"])
+                graph = (cur_graph_ratio * graph_criterion(s_emb, t["embedding"])
                          if graph_criterion is not None else s_logits.new_zeros(()))
                 loss = ce + kd + dist + angle + at + graph
 
@@ -362,7 +379,8 @@ def run_experiment(opts):
         is_eval_epoch = (epoch % opts.eval_every == 0) or (epoch == opts.epochs)
         if not is_eval_epoch:
             run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
-                     "train/graph_temperature": cur_temp, **loss_log}, step=epoch)
+                     "train/graph_temperature": cur_temp,
+                     "train/graph_ratio": cur_graph_ratio, **loss_log}, step=epoch)
             continue
 
         # Mesmas métricas (top-1/top-5) em train, val e test (aluno).
@@ -380,6 +398,7 @@ def run_experiment(opts):
               f"best_val@1={best_val_top1*100:.2f}")
         run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
                  "val/best_top1": best_val_top1, "train/graph_temperature": cur_temp,
+                 "train/graph_ratio": cur_graph_ratio,
                  **loss_log, **log_dict(metrics)}, step=epoch)
 
         if opts.save_dir:

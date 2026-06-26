@@ -64,6 +64,9 @@ def build_parser():
     p.add_argument("--seeds", type=int, default=3,
                    help="seeds por candidato N na busca (R)")
     p.add_argument("--select", choices=["argmax", "1se"], default="argmax")
+    p.add_argument("--graph_warmup_frac", type=float, default=0.1,
+                   help="warmup do peso da loss de grafo (fração das épocas); "
+                        "0 = desliga. Balanceia CE vs grafo no início do treino.")
 
     # runtime / W&B
     p.add_argument("--amp", action="store_true")
@@ -167,6 +170,7 @@ def phase_graph(opts, dry):
                 "--search_epochs", str(opts.search_epochs),
                 "--final_epochs", str(opts.student_epochs),
                 "--seeds", str(opts.seeds), "--select", opts.select,
+                "--graph_warmup_frac", str(opts.graph_warmup_frac),
                 "--seed", str(opts.seed),
                 "--modes", *opts.objectives, "--methods", *opts.embeddings,
                 "--save_root", block_dir,
