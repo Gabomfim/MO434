@@ -67,11 +67,14 @@ def build_parser():
     p.add_argument("--angle_ratio", type=float, default=0.0)
     p.add_argument("--at_ratio", type=float, default=0.0)
 
-    # rotina de temperatura da destilação (InfoNCE contrastiva)
+    # Temperatura da InfoNCE contrastiva. Default CONSTANTE (τ fixa tunada) — é o
+    # baseline limpo. O agendamento (linear/cosine/exp) fica como ABLAÇÃO opcional.
     p.add_argument("--temp_schedule", choices=["constant", "linear", "cosine", "exp"],
-                   default="cosine")
-    p.add_argument("--temp_start", type=float, default=0.1)
-    p.add_argument("--temp_end", type=float, default=0.05)
+                   default="constant")
+    p.add_argument("--temp_start", type=float, default=0.07,
+                   help="τ (valor fixo se temp_schedule=constant)")
+    p.add_argument("--temp_end", type=float, default=0.05,
+                   help="τ final (usado só se temp_schedule != constant)")
 
     # wandb
     p.add_argument("--wandb_project", default="graph-rkd-node-search")

@@ -178,10 +178,12 @@ uma run longa no N escolhido.
 orquestrador desliga KD, RKD-D, RKD-A e attention (`kd/dist/angle/at = 0`), então
 a única componente relacional é a do grafo.
 
-**Rotina de temperatura da destilação:** a temperatura da InfoNCE contrastiva
-varia ao longo do treino (`--temp_schedule {constant,linear,cosine,exp}`,
-`--temp_start`, `--temp_end`; padrão cosine 0.1→0.05), logada em
-`train/graph_temperature`. (No modo `regression` não há temperatura.)
+**Temperatura da InfoNCE contrastiva:** **constante por padrão** (`--temp_start`,
+τ=0.07) — é o baseline limpo, alinhado com SimCLR/MoCo/CRD. O **agendamento** é
+uma **ablação opcional** (`--temp_schedule {linear,cosine,exp}` + `--temp_end`),
+logada em `train/graph_temperature`. Cuidado ao interpretar: baixar τ amplifica o
+gradiente por ~1/τ, então o schedule se confunde com a escala do LR; e a
+regressão não tem temperatura (a comparação reg×contr fica mais limpa com τ fixa).
 
 ```bash
 TEACHER_ARCH=resnet18 DATASET=cub200 bash examples/graph_rkd_search.sh
