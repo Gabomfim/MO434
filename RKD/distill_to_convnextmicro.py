@@ -371,9 +371,15 @@ def run_experiment(opts):
             os.makedirs(opts.save_dir, exist_ok=True)
             last_path = os.path.join(opts.save_dir, "student_last.pth")
             torch.save(student.state_dict(), last_path)
-            aliases = ["last", "epoch-%d" % epoch] + (["best"] if improved else [])
-            log_model_artifact(run, last_path, art_name, aliases=aliases,
-                               metadata={"epoch": epoch, **log_dict(metrics)})
+            # Local toda época; envia ao W&B só quando melhora (best) ou na
+            # última época (last) -- sem alias epoch-N e com TTL -- para não
+            # acumular uma versão por época e estourar o storage.
+            is_final = epoch == opts.epochs
+            if improved or is_final:
+                aliases = (["best"] if improved else []) + (["last"] if is_final else [])
+                log_model_artifact(run, last_path, art_name, aliases=aliases,
+                                   ttl_days=30,
+                                   metadata={"epoch": epoch, **log_dict(metrics)})
 
     # Métricas finais com o aluno que MAXIMIZA A GENERALIZAÇÃO (melhor val).
     if best_state is not None:

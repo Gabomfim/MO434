@@ -8,22 +8,31 @@ training can pull them directly instead of relying on a local path.
 
 import glob
 import os
+from datetime import timedelta
 
 import wandb
 
 
-def log_model_artifact(run, file_path, name, aliases=None, metadata=None):
+def log_model_artifact(run, file_path, name, aliases=None, metadata=None,
+                       ttl_days=None):
     """Ship a saved checkpoint to W&B as a versioned ``model`` artifact.
 
     No-op when there is no active run or the run is disabled, so callers can
     invoke it unconditionally. ``name`` should be stable across a run so W&B
     versions (v0, v1, ...) accumulate under one artifact; ``aliases`` (e.g.
-    ["best"], ["last", "epoch-12"]) tag specific versions.
+    ["best"], ["last"]) tag specific versions.
+
+    ``ttl_days`` sets a time-to-live so old versions expire automatically -- a
+    safety net against unbounded storage growth. Avoid logging a new version
+    every epoch and avoid unique per-epoch aliases (e.g. "epoch-N"), which keep
+    every version pinned forever.
     """
     if run is None or getattr(run, "disabled", False):
         return
     artifact = wandb.Artifact(name=name, type="model", metadata=metadata or {})
     artifact.add_file(file_path)
+    if ttl_days is not None:
+        artifact.ttl = timedelta(days=ttl_days)
     run.log_artifact(artifact, aliases=aliases or [])
 
 

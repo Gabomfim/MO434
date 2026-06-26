@@ -120,6 +120,16 @@ class Cars196Classification(Dataset):
         self.target_transform = target_transform
         self.loader = default_loader
 
+        # Split OFICIAL do Cars-196 (8144/8041) materializado como ImageFolder em
+        # <root>/Cars196/official/{train,test}/<label 000..195>/. Preferido quando
+        # presente, pois o cars_annos.mat local pode estar sem a flag test oficial
+        # (todas as imagens marcadas como treino). Ver prepare_cars196_official.py.
+        official_split = os.path.join(self.root, "official",
+                                      "train" if train else "test")
+        if os.path.isdir(official_split):
+            self.samples = ImageFolder(official_split).samples
+            return
+
         if download:
             download_url(self.img_url, self.root, self.img_filename, self.img_md5)
             download_url(self.anno_url, self.root, self.anno_filename, self.anno_md5)
@@ -131,10 +141,21 @@ class Cars196Classification(Dataset):
                 tar.close()
                 os.chdir(cwd)
 
-        if not self._check_integrity() or not check_integrity(
-                os.path.join(self.root, self.anno_filename), self.anno_md5):
-            raise RuntimeError(
-                "Dataset not found or corrupted. Use download=True to download it")
+        anno_path = os.path.join(self.root, self.anno_filename)
+        if download:
+            # Verificacao estrita de md5 so faz sentido para o download oficial.
+            if not self._check_integrity() or \
+               not check_integrity(anno_path, self.anno_md5):
+                raise RuntimeError(
+                    "Dataset not found or corrupted. Use download=True to download it")
+        else:
+            # Dados locais (ex: car_ims/cars_annos.mat de outra fonte): confia na
+            # presenca dos arquivos em vez do md5 original.
+            if not os.path.isfile(anno_path) or not os.path.isdir(
+                    os.path.join(self.root, self.base_folder)):
+                raise RuntimeError(
+                    "Dataset not found at %s. Use download=True to download it"
+                    % self.root)
 
         annotations = io.loadmat(
             os.path.join(self.root, self.anno_filename))["annotations"][0]

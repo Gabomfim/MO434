@@ -64,10 +64,16 @@ def build_classification_loaders(dataset_cls, data_root, train_tf, test_tf,
     labels = [lbl for _, lbl in train_full.samples]
     train_idx, val_idx = stratified_train_val_split(labels, val_fraction, seed)
 
+    # persistent_workers evita recriar os workers a cada época (os loaders são
+    # reusados no loop de treino/eval); sem isso, em runs longos os ciclos de
+    # teardown dos workers acumulam e podem deadlockar ao entrar no eval.
+    persistent = workers > 0
+
     def loader(ds, idx=None, shuffle=False, drop_last=False):
         subset = Subset(ds, idx) if idx is not None else ds
         return DataLoader(subset, batch_size=batch, shuffle=shuffle,
-                          num_workers=workers, pin_memory=True, drop_last=drop_last)
+                          num_workers=workers, pin_memory=True, drop_last=drop_last,
+                          persistent_workers=persistent)
 
     loaders = {
         "train": loader(train_full, train_idx, shuffle=True, drop_last=True),

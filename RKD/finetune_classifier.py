@@ -271,15 +271,19 @@ def run_experiment(opts):
                      "best_val_top1": best_val_top1}
             last_path = os.path.join(opts.save_dir, "last.pth")
             torch.save(state, last_path)
-            log_model_artifact(run, last_path, art_name,
-                               aliases=["last", "epoch-%d" % epoch],
-                               metadata={"epoch": epoch, **log_dict(metrics)})
+            # Local toda época (p/ --resume), mas só envia ao W&B quando melhora
+            # (best) ou na última época (last) -- sem alias epoch-N e com TTL --
+            # para não estourar o storage do W&B.
             if improved:
                 best_path = os.path.join(opts.save_dir, "best.pth")
                 torch.save(state, best_path)
                 log_model_artifact(run, best_path, art_name, aliases=["best"],
-                                   metadata={"epoch": epoch,
-                                             "val_top1": best_val_top1})
+                                   ttl_days=30,
+                                   metadata={"epoch": epoch, "val_top1": best_val_top1})
+            if epoch == opts.epochs - 1:
+                log_model_artifact(run, last_path, art_name, aliases=["last"],
+                                   ttl_days=30,
+                                   metadata={"epoch": epoch, **log_dict(metrics)})
 
     # Métricas finais com o modelo que MAXIMIZA A GENERALIZAÇÃO (melhor val).
     if best_state is not None:
