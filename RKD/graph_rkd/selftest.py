@@ -10,6 +10,7 @@ from graph_rkd import (
     GraphContrastiveDistillLoss,
     GraphRKDLoss,
     SampledGraphContrastiveLoss,
+    adaptive_num_graphs,
     mds_spectral_embedding,
     node_profile_embedding,
     node_profile_embedding_np,
@@ -117,6 +118,40 @@ def test_graph_rkd_loss():
     assert loss_same.item() < 1e-6
 
 
+def test_adaptive_sampling_scales_with_pascal_row():
+    K = 128
+    # G(N) deve crescer com C(K,N): subir de N pequeno até o pico e cair perto de K.
+    gs = {N: adaptive_num_graphs(K, N, alpha=0.5, g_min=1, g_max=10**9)
+          for N in (2, 4, 8, 16, 32, 64, 96, 127)}
+    print("[adaptive] G(N) (alpha=0.5):", gs)
+    assert gs[2] < gs[8] < gs[32] < gs[64]      # cresce com a linha de Pascal
+    assert gs[64] >= gs[96] >= gs[127]          # cai depois do pico (N=K/2)
+    # piso e teto respeitados
+    assert adaptive_num_graphs(K, 8, alpha=0.0, g_min=5) == 5
+    assert adaptive_num_graphs(K, 8, alpha=10.0, g_max=12) == 12
+    # sample_graphs('log') devolve exatamente G(N) grafos de N nós
+    gen = torch.Generator().manual_seed(0)
+    G = adaptive_num_graphs(K, 8, alpha=0.5)
+    graphs = sample_graphs(K, 8, sampling="log", alpha=0.5, generator=gen)
+    print(f"[adaptive] sample_graphs('log') -> {tuple(graphs.shape)} (G={G}, N=8)")
+    assert tuple(graphs.shape) == (G, 8)
+
+
+def test_losses_with_log_sampling():
+    torch.manual_seed(0)
+    s = torch.randn(64, 16, requires_grad=True)
+    t = torch.randn(64, 24)
+    for name, crit in [("reg", GraphRKDLoss(method="profile", n_nodes=8,
+                                            sampling="log", alpha=0.5)),
+                       ("contr", GraphContrastiveDistillLoss(method="mds", n_nodes=8,
+                                 sampling="log", alpha=0.5, num_negatives=5))]:
+        loss = crit(s, t)
+        grad, = torch.autograd.grad(loss, s, retain_graph=True)
+        print(f"[log-sampling/{name}] loss={loss.item():.4f} grad_ok="
+              f"{torch.isfinite(grad).all().item() and grad.norm()>0}")
+        assert loss.item() > 0 and torch.isfinite(grad).all()
+
+
 def test_infonce_matches_reference_formula():
     # Vetorizado (cross_entropy) deve igualar -log(pos/(pos+Σneg)) sobre OS MESMOS
     # negativos. Fixamos os negativos passando um pool e gerador idêntico.
@@ -169,6 +204,8 @@ if __name__ == "__main__":
     test_mean_sort_can_break_invariance()
     test_differentiability()
     test_graph_rkd_loss()
+    test_adaptive_sampling_scales_with_pascal_row()
+    test_losses_with_log_sampling()
     test_infonce_matches_reference_formula()
     test_contrastive_distill()
     print("\nTODOS OS TESTES PASSARAM.")

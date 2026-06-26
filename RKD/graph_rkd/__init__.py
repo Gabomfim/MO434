@@ -1,4 +1,5 @@
 from .node_search import (
+    adaptive_num_graphs,
     derive_scaling_rule,
     find_best_n,
     find_knee_n,

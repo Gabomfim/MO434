@@ -31,6 +31,9 @@ cmd=(
   --edge_budget 1024
   --modes regression contrastive
   --methods profile mds
+  --graph_rkd_sampling log
+  --graph_rkd_alpha 0.5
+  --graph_rkd_gmax 64
   --search_epochs 30
   --final_epochs 300
   --temp_schedule constant

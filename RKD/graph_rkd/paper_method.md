@@ -83,12 +83,29 @@ $\binom{128}{64}\approx 2.4\times10^{37}$), so enumerating all graphs to
 evaluate the loss is infeasible. We make the per-minibatch loss computable by
 **sampling** a small set of graphs at each step rather than enumerating them.
 Each step either partitions the shuffled minibatch into $\lfloor K/N \rfloor$
-node-disjoint graphs or draws a fixed number of random $N$-node subsets, and the
-sampled set is re-randomized every iteration. Provided the sampling is
-representative, the gradient computed over the sample is an unbiased estimator of
-the gradient over the full graph space, so the student converges toward the same
-optimum at a per-step cost of $O(G\cdot N^2)$ (with $G$ the number of sampled
-graphs), independent of $\binom{K}{N}$.
+node-disjoint graphs or draws a set of random $N$-node subsets, and the sampled
+set is re-randomized every iteration. Provided the sampling is representative,
+the gradient computed over the sample is an unbiased estimator of the gradient
+over the full graph space, so the student converges toward the same optimum at a
+per-step cost of $O(G\cdot N^2)$ (with $G$ the number of sampled graphs),
+independent of $\binom{K}{N}$.
+
+Because the size of the graph space varies strongly with the relational order —
+$\binom{K}{N}$ spans many orders of magnitude across a Pascal row — we let the
+number of sampled graphs grow with that size rather than holding it fixed. As the
+raw count is unusable directly, we scale $G$ with its *description length*
+(the number of bits needed to identify one graph),
+
+$$G(N) \;=\; \mathrm{clamp}\!\big(\,\alpha\,\log_2\!\tbinom{K}{N},\; g_{\min},\; g_{\max}\big),$$
+
+so the sampler draws more graphs where the space is exponentially larger (peaking
+at $N=K/2$) and fewer at the extremes, while remaining bounded. We use
+$\alpha=0.5$ and $g_{\min}=\lfloor K/N\rfloor$ (at least one full-batch partition,
+ensuring coverage no worse than node-disjoint sampling), with an optional cap
+$g_{\max}$ to bound compute. This is a heuristic for matching sample diversity to
+the space rather than a statistical requirement: the variance of a Monte-Carlo
+estimator does not depend on population size, but sampling more graphs at larger
+$N$ covers a more diverse and higher-variance space.
 
 ## Permutation-invariant graph embeddings
 

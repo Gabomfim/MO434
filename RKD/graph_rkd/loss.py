@@ -18,17 +18,21 @@ import torch
 import torch.nn as nn
 
 from .embeddings import embed_graphs
+from .node_search import adaptive_num_graphs
 
 __all__ = ["GraphRKDLoss", "sample_graphs"]
 
 
 def sample_graphs(batch_size, n_nodes, sampling="partition", graphs_per_step=None,
-                  generator=None, device="cpu"):
+                  alpha=0.5, g_min=None, g_max=None, generator=None, device="cpu"):
     """Gera índices de grafos (conjuntos de ``n_nodes`` nós) a partir do batch.
 
     * ``partition``: embaralha o batch e fatia em ⌊B/N⌋ grafos disjuntos
       (cada amostra usada uma vez). Nº de grafos = ⌊B/N⌋.
     * ``random``: ``graphs_per_step`` subconjuntos aleatórios de N nós.
+    * ``log``: nº de grafos ADAPTATIVO, crescendo com a linha do triângulo de
+      Pascal — ``adaptive_num_graphs(B, N, alpha, g_min, g_max)`` subconjuntos
+      aleatórios (recomendado; ver node_search.adaptive_num_graphs).
 
     Retorna LongTensor ``(num_graphs, n_nodes)``.
     """
@@ -38,12 +42,15 @@ def sample_graphs(batch_size, n_nodes, sampling="partition", graphs_per_step=Non
         perm = torch.randperm(batch_size, generator=generator, device=device)
         g = batch_size // n_nodes
         return perm[: g * n_nodes].reshape(g, n_nodes)
-    if sampling == "random":
-        g = graphs_per_step or max(1, batch_size // n_nodes)
+    if sampling in ("random", "log"):
+        if sampling == "log":
+            g = adaptive_num_graphs(batch_size, n_nodes, alpha, g_min, g_max)
+        else:
+            g = graphs_per_step or max(1, batch_size // n_nodes)
         idx = [torch.randperm(batch_size, generator=generator, device=device)[:n_nodes]
                for _ in range(g)]
         return torch.stack(idx, dim=0)
-    raise ValueError("sampling deve ser 'partition' ou 'random'")
+    raise ValueError("sampling deve ser 'partition', 'random' ou 'log'")
 
 
 class GraphRKDLoss(nn.Module):
@@ -52,8 +59,10 @@ class GraphRKDLoss(nn.Module):
     Args:
         method: ``"profile"`` (perfil de nós ordenado) ou ``"mds"`` (autovalores).
         n_nodes: N — nº de nós por grafo (use node_search.find_best_n).
-        sampling: ``"partition"`` ou ``"random"``.
+        sampling: ``"partition"``, ``"random"`` ou ``"log"`` (adaptativo).
         graphs_per_step: nº de grafos quando ``sampling="random"``.
+        alpha/g_min/g_max: hiperparâmetros do ``sampling="log"`` (ver
+            node_search.adaptive_num_graphs).
         p: ordem da norma de Minkowski usada na perda por grafo.
         normalize: normaliza cada matriz de distância pela média (escala-invar.).
         squared: usa distâncias ao quadrado na matriz.
@@ -61,8 +70,8 @@ class GraphRKDLoss(nn.Module):
     """
 
     def __init__(self, method="profile", n_nodes=8, sampling="partition",
-                 graphs_per_step=None, p=2, normalize=True, squared=False,
-                 sort_key="lex"):
+                 graphs_per_step=None, alpha=0.5, g_min=None, g_max=None,
+                 p=2, normalize=True, squared=False, sort_key="lex"):
         super().__init__()
         if method not in ("profile", "mds"):
             raise ValueError("method deve ser 'profile' ou 'mds'")
@@ -70,6 +79,9 @@ class GraphRKDLoss(nn.Module):
         self.n_nodes = n_nodes
         self.sampling = sampling
         self.graphs_per_step = graphs_per_step
+        self.alpha = alpha
+        self.g_min = g_min
+        self.g_max = g_max
         self.p = p
         self.normalize = normalize
         self.squared = squared
@@ -86,7 +98,8 @@ class GraphRKDLoss(nn.Module):
         B = student_emb.shape[0]
         if graphs is None:
             graphs = sample_graphs(B, self.n_nodes, self.sampling,
-                                   self.graphs_per_step, generator,
+                                   self.graphs_per_step, self.alpha, self.g_min,
+                                   self.g_max, generator=generator,
                                    device=student_emb.device)
 
         s_nodes = student_emb[graphs]                 # (G, N, d_s)

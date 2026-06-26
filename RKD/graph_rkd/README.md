@@ -111,9 +111,40 @@ referência; invariância (A vs embaralhado = 0) e sensibilidade (A vs B > 0) pa
 os dois métodos; gradiente finito e não-nulo; e a perda → 0 quando
 student == teacher.
 
+## Amostragem adaptativa de grafos (`sampling`)
+
+Quantos grafos amostrar por passo:
+
+| `sampling` | nº de grafos/passo | quando usar |
+|---|---|---|
+| `partition` | ⌊K/N⌋ (disjuntos) | baseline; cada amostra usada 1× |
+| `random` | `graphs_per_step` (fixo) | controle manual |
+| **`log`** (recomendado) | `G(N) = clamp(round(α·log₂ C(K,N)), g_min, g_max)` | **escala com a linha do triângulo de Pascal** |
+
+O esquema **`log`** faz o nº de grafos amostrados **crescer com `C(K,N)`** (o
+valor da linha de Pascal). Como `C(K,N)` é gigante (~1e37), escalamos com
+`log₂ C(K,N)` — o *description length* (bits para especificar um grafo), que é
+limitado, cresce com a linha e tem pico em `N=K/2`. Para K=128, α=0.5:
+
+```
+N:   2   4   8  16  32  64  96  127
+G:   6  12  20  33  50  62  50    4
+```
+
+**Valores sugeridos:** `α=0.5` (≈ meio grafo por bit do espaço; dá G∈[6,33] no
+regime prático N≤17), `g_min=⌊K/N⌋` (cobertura ≥ partition, default), `g_max=64`
+(teto de custo; raramente ativa em N pequeno). α=1.0 ≈ dobra os grafos (menos
+variância, mais custo); α=0.25 ≈ metade. Custo/passo = `G·C(N,2)` arestas.
+
+> Nota estatística honesta: o nº de amostras para variância fixa de um estimador
+> Monte Carlo **não** depende do tamanho da população. Escalar com `log C(K,N)` é
+> uma heurística razoável ("mais diversidade ⇒ amostrar mais"), não uma exigência
+> teórica — o ganho real é cobrir um espaço mais diverso com mais grafos quando N
+> cresce, sem nunca enumerá-lo.
+
 ## Perda de destilação Graph-RKD
 
-`GraphRKDLoss(method="profile"|"mds", n_nodes=N, sampling="partition"|"random", ...)`
+`GraphRKDLoss(method="profile"|"mds", n_nodes=N, sampling="partition"|"random"|"log", ...)`
 generaliza o RKD: casa o embedding do grafo de N nós entre teacher e student
 (mesmos índices nos dois lados), em vez de pares (RKD-D) ou trios (RKD-A).
 

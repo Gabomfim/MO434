@@ -51,6 +51,12 @@ def build_parser():
                    help="ganho relativo mínimo de val top-1 ao dobrar N")
     p.add_argument("--graph_rkd_ratio", type=float, default=None,
                    help="peso da loss de grafo (default por modo: reg=1000, contr=1)")
+    p.add_argument("--graph_rkd_sampling", choices=["partition", "random", "log"],
+                   default="log", help="amostragem de grafos (log = adaptativa)")
+    p.add_argument("--graph_rkd_alpha", type=float, default=0.5,
+                   help="sampling=log: G = alpha*log2(C(K,N))")
+    p.add_argument("--graph_rkd_gmax", type=int, default=64,
+                   help="sampling=log: teto de grafos/passo (custo)")
 
     # treino
     p.add_argument("--search_epochs", type=int, default=30)
@@ -104,6 +110,9 @@ def run_one(opts, mode, method, n_nodes, epochs, tag):
         "at_ratio": opts.at_ratio,
         "graph_rkd_mode": mode, "graph_rkd_method": method,
         "graph_rkd_nodes": n_nodes, "graph_rkd_ratio": ratio,
+        "graph_rkd_sampling": opts.graph_rkd_sampling,
+        "graph_rkd_alpha": opts.graph_rkd_alpha,
+        "graph_rkd_gmax": opts.graph_rkd_gmax,
         "temp_schedule": opts.temp_schedule, "temp_start": opts.temp_start,
         "temp_end": opts.temp_end,
         "amp": opts.amp,

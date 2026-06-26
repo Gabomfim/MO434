@@ -78,13 +78,17 @@ class GraphContrastiveDistillLoss(nn.Module):
     """
 
     def __init__(self, method="profile", n_nodes=8, sampling="partition",
-                 graphs_per_step=None, num_negatives=10, temperature=0.07,
+                 graphs_per_step=None, alpha=0.5, g_min=None, g_max=None,
+                 num_negatives=10, temperature=0.07,
                  normalize=True, squared=False, sort_key="lex"):
         super().__init__()
         self.method = method
         self.n_nodes = n_nodes
         self.sampling = sampling
         self.graphs_per_step = graphs_per_step
+        self.alpha = alpha
+        self.g_min = g_min
+        self.g_max = g_max
         self.normalize = normalize
         self.squared = squared
         self.sort_key = sort_key
@@ -100,7 +104,8 @@ class GraphContrastiveDistillLoss(nn.Module):
         B = student_emb.shape[0]
         if graphs is None:
             graphs = sample_graphs(B, self.n_nodes, self.sampling,
-                                   self.graphs_per_step, generator,
+                                   self.graphs_per_step, self.alpha, self.g_min,
+                                   self.g_max, generator=generator,
                                    device=student_emb.device)
         G = graphs.shape[0]
 

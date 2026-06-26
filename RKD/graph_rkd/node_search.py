@@ -31,6 +31,7 @@ __all__ = [
     "unique_graphs", "ordered_tuples", "permutation_reduction",
     "step_edge_cost", "largest_feasible_n", "find_best_n",
     "find_knee_n", "derive_scaling_rule", "plot_unique_graphs",
+    "adaptive_num_graphs",
 ]
 
 
@@ -56,6 +57,29 @@ def ordered_tuples(B: int, N: int) -> int:
 def permutation_reduction(N: int) -> int:
     """Fator de redução set-vs-tupla = N! (quantas ordenações colapsam em 1 grafo)."""
     return math.factorial(N)
+
+
+def adaptive_num_graphs(batch_size: int, n_nodes: int, alpha: float = 0.5,
+                        g_min: Optional[int] = None,
+                        g_max: Optional[int] = None) -> int:
+    """Nº de grafos a amostrar que CRESCE com a linha do triângulo de Pascal.
+
+    O valor da linha C(K, N) é gigante (até ~1e37), então escalamos com
+    ``log2(C(K,N))`` — o *description length* (bits para especificar um grafo) do
+    espaço de grafos. É limitado, cresce com a linha e tem pico em N = K/2:
+
+        G(N) = clamp( round(alpha · log2 C(K,N)) , g_min , g_max )
+
+    g_min default = ⌊K/N⌋ (pelo menos uma partição completa do batch), garantindo
+    cobertura ≥ ``partition``. ``g_max`` limita o custo (None = sem teto).
+    """
+    if g_min is None:
+        g_min = max(1, batch_size // n_nodes)
+    bits = math.log2(unique_graphs(batch_size, n_nodes) + 1)
+    g = max(g_min, round(alpha * bits))
+    if g_max is not None:
+        g = min(g, g_max)
+    return max(1, g)
 
 
 # --------------------------------------------------------------------------- #

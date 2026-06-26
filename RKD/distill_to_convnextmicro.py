@@ -95,10 +95,16 @@ def build_parser():
     p.add_argument("--graph_rkd_method", choices=["profile", "mds"], default="profile")
     p.add_argument("--graph_rkd_nodes", type=int, default=8, help="N (busca binária)")
     p.add_argument("--graph_rkd_ratio", type=float, default=0.0)
-    p.add_argument("--graph_rkd_sampling", choices=["partition", "random"],
-                   default="partition")
+    p.add_argument("--graph_rkd_sampling", choices=["partition", "random", "log"],
+                   default="log")
     p.add_argument("--graph_rkd_graphs", type=int, default=None,
                    help="grafos/passo qdo sampling=random")
+    p.add_argument("--graph_rkd_alpha", type=float, default=0.5,
+                   help="sampling=log: G = alpha*log2(C(K,N))")
+    p.add_argument("--graph_rkd_gmin", type=int, default=None,
+                   help="sampling=log: piso de grafos (default ⌊K/N⌋)")
+    p.add_argument("--graph_rkd_gmax", type=int, default=None,
+                   help="sampling=log: teto de grafos (limita custo)")
     p.add_argument("--num_negatives", type=int, default=10, help="contrastive")
     p.add_argument("--temperature", type=float, default=0.07,
                    help="temperatura inicial da InfoNCE contrastiva")
@@ -256,12 +262,16 @@ def run_experiment(opts):
             graph_criterion = GraphRKDLoss(
                 method=opts.graph_rkd_method, n_nodes=opts.graph_rkd_nodes,
                 sampling=opts.graph_rkd_sampling,
-                graphs_per_step=opts.graph_rkd_graphs).to(device)
+                graphs_per_step=opts.graph_rkd_graphs,
+                alpha=opts.graph_rkd_alpha, g_min=opts.graph_rkd_gmin,
+                g_max=opts.graph_rkd_gmax).to(device)
         else:  # contrastive
             graph_criterion = GraphContrastiveDistillLoss(
                 method=opts.graph_rkd_method, n_nodes=opts.graph_rkd_nodes,
                 sampling=opts.graph_rkd_sampling,
                 graphs_per_step=opts.graph_rkd_graphs,
+                alpha=opts.graph_rkd_alpha, g_min=opts.graph_rkd_gmin,
+                g_max=opts.graph_rkd_gmax,
                 num_negatives=opts.num_negatives, temperature=opts.temperature).to(device)
 
     optimizer = torch.optim.AdamW(student.parameters(), lr=opts.lr,
