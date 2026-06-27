@@ -98,11 +98,15 @@ def build_classifier(arch, num_classes, pretrained=True, freeze_backbone=False):
                               freeze_backbone=freeze_backbone)
 
 
-def load_teacher(arch, num_classes, ckpt_path, device):
+def load_teacher(arch, num_classes, ckpt_path, device, strict=True):
     """Instancia o wrapper e carrega um checkpoint do fine-tune (chave 'model'
-    ou state_dict cru)."""
+    ou state_dict cru).
+
+    ``strict=False`` ignora divergências (ex.: cabeça classificadora não usada
+    em metric learning), carregando apenas o backbone/embedding.
+    """
     model = build_classifier(arch, num_classes, pretrained=False)
     blob = torch.load(ckpt_path, map_location=device)
     state = blob["model"] if isinstance(blob, dict) and "model" in blob else blob
-    model.load_state_dict(state)
+    model.load_state_dict(state, strict=strict)
     return model.to(device)
