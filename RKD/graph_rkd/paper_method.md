@@ -178,7 +178,7 @@ $$\mathcal{C} \;=\; \{\,n_{\min},\; b\,n_{\min},\; b^2 n_{\min},\;\dots,\; N_{\m
 which contains $\approx\log_b N_{\max}$ points — the *same* training budget a
 binary search would spend — but reveals the shape of the quality–$N$ curve
 without assuming monotonicity. Each candidate is trained (short schedule) with
-$R$ seeds; its score is the mean best validation top-1 (test is never used for
+$R$ seeds; its score is the mean best validation recall@1 (test is never used for
 selection). We then pick $N^\*$ either by $\arg\max$ or, for parsimony, by the
 **one-standard-error rule** — the smallest $N$ whose mean score is within one
 standard error of the best, preferring cheaper (smaller-$N$) configurations when
@@ -249,7 +249,7 @@ N_max <- largest N with K (N-1)/2 <= E         # = floor(2E/K + 1), no training
 C <- { n_min, b*n_min, b^2*n_min, ..., N_max }  (sorted, unique)
 # 3) seed-averaged validation quality of each candidate
 for N in C:
-    vals <- [ best_val_top1( distill(order=N, short schedule, seed=r) ) : r in 1..R ]
+    vals <- [ best_val_recall@1( distill(order=N, short schedule, seed=r) ) : r in 1..R ]
     mean[N] <- mean(vals);  sem[N] <- std(vals) / sqrt(R)
 # 4) selection
 if rule = argmax:
@@ -263,23 +263,23 @@ return N*
 
 ## Datasets and splits
 
-We evaluate on two standard fine-grained image-classification benchmarks.
-**Stanford Cars-196** (Krause et al., 2013) contains $16{,}185$ images of $196$
-car models, with an official split of $8{,}144$ training and $8{,}041$ test
-images. **Caltech-UCSD Birds-200-2011 (CUB-200)** (Wah et al., 2011) contains
-$11{,}788$ images of $200$ bird species, with an official split of $5{,}994$
-training and $5{,}794$ test images (given by `train_test_split.txt`).
+We evaluate on two standard fine-grained **deep-metric-learning / retrieval**
+benchmarks. **Stanford Cars-196** (Krause et al., 2013) contains $16{,}185$
+images of $196$ car models; **Caltech-UCSD Birds-200-2011 (CUB-200)** (Wah et
+al., 2011) contains $11{,}788$ images of $200$ bird species.
 
-For both datasets we use the **official classification split**, in which all
-classes appear in both training and test sets — not the disjoint
-metric-learning split (in which train and test classes are non-overlapping) used
-by retrieval-oriented RKD. Because neither dataset ships a validation set, we
-derive one by holding out a **class-stratified $10\%$ of the training set** with
-a fixed seed. All hyperparameter selection — the checkpoint kept for final
-evaluation, the relational order $N$, and any temperature schedule — relies
-**only on this validation split**; the official test set is read once, with the
-validation-selected checkpoint, and the same top-1 / top-5 metrics are reported
-on train, validation, and test.
+We use the standard **metric-learning split**, in which the training and test
+**classes are disjoint** (e.g., for Cars-196 the first $98$ classes for training
+and the remaining $98$ for testing; analogously the first/last $100$ for
+CUB-200). The model is evaluated by **recall@K** ($K\in\{1,2,4,8\}$): for each
+test image, whether a same-class neighbor appears among its $K$ nearest
+neighbors in embedding space. Because the disjoint split provides no validation
+set, we hold out a **disjoint subset of the training classes** ($20\%$, fixed
+seed) as validation — so validation classes are unseen during training. All
+hyperparameter selection — the checkpoint kept for final evaluation and the
+relational order $N$ — relies **only on validation recall@1**; the test set is
+read once, with the validation-selected checkpoint, and recall@K is reported on
+train, validation, and test.
 
 ## Preprocessing and data augmentation
 
@@ -298,23 +298,25 @@ normalized by its mean edge weight before embedding.
 ## Training configuration
 
 **Teacher fine-tuning.** Teachers are ImageNet-1k pretrained backbones —
-ResNet-18 or ConvNeXt-Tiny — with the classification head replaced by a fresh
-$C$-way layer ($C\in\{196,200\}$). The backbone and the new head use different
-learning rates (head $\times 10$, since it trains from scratch). ResNet-18 uses
-SGD (Nesterov, momentum $0.9$, weight decay $10^{-4}$, base lr $0.01$);
-ConvNeXt-Tiny uses AdamW (weight decay $0.05$, base lr $10^{-4}$). Both run for
-$60$ epochs, batch size $64$, cosine schedule with a $3$-epoch linear warmup,
-label smoothing $0.1$, and mixed precision.
+ResNet-18 or ConvNeXt-Tiny — fine-tuned as **embedding networks** with a
+**triplet loss** (distance-weighted sampling, margin $0.2$) on the disjoint
+training classes, with L2-normalized embeddings and NPairs class-balanced
+batches; they are evaluated by recall@K. AdamW (lr $10^{-4}$, weight decay
+$10^{-5}$), $60$ epochs, batch $128$, cosine schedule with $3$-epoch warmup,
+mixed precision.
 
 **Student distillation.** The student is **ConvNextMicro** (dims
-$(24,48,96,192)$, depths $(1,1,3,1)$, $\approx 0.67$M parameters), trained from
-scratch with **cross-entropy plus the graph loss only** — Hinton KD,
-RKD-distance, RKD-angle, and attention transfer are all disabled. Optimization
-uses AdamW (lr $10^{-3}$, weight decay $0.05$, $\beta=(0.9,0.999)$), a cosine
-schedule with a $20$-epoch linear warmup, $300$ epochs, batch size $K=128$,
-stochastic depth $0.1$, label smoothing $0.1$, and mixed precision. A
-from-scratch ConvNextMicro trained with cross-entropy alone (identical
-hyperparameters) serves as the baseline that isolates the distillation gain.
+$(24,48,96,192)$, depths $(1,1,3,1)$, $\approx 0.67$M parameters), trained as an
+embedding network with **triplet + the graph loss only** (no Hinton KD — metric
+learning has no shared logits). The relational graph term is balanced against the
+triplet by a **warm-up** that ramps its weight $0\!\to\!1$ over the first
+$10\%$ of epochs (early student embeddings are noise). Optimization: AdamW
+(lr $10^{-3}$, weight decay $0.05$), cosine schedule with $5$-epoch warmup,
+$120$ epochs, batch $K=128$, NPairs sampling, stochastic depth $0.1$, mixed
+precision. The **classic baselines** replace the graph term with a single
+relational loss — **RKD-distance alone** or **RKD-angle alone** — under the same
+triplet + warm-up. A from-scratch ConvNextMicro trained with **triplet only**
+(identical hyperparameters) is the reference that isolates the distillation gain.
 
 **Graph loss.** Default values:
 
@@ -331,4 +333,4 @@ hyperparameters) serves as the baseline that isolates the distillation gain.
 
 Each (objective $\times$ embedding) combination is run separately, and within
 each the order $N$ is selected by the budget-bounded log-spaced sweep of
-Algorithm 4 on the validation top-1.
+Algorithm 4 on the **validation recall@1**.

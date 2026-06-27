@@ -193,25 +193,30 @@ Notas de implementação (vs. o protocolo de referência):
 - `SampledGraphContrastiveLoss(temperature, num_negative_samples)` é a classe
   genérica com a assinatura `(anchor, positive, pool)` pedida.
 
-## Campanha completa (todos os experimentos)
+## Campanha completa (METRIC LEARNING)
 
-`run_all_experiments.py` roda a grade inteira em ordem de dependência, tudo no
-W&B: (0a) professores `datasets×teachers` (`finetune_classifier`); (0b) baseline
-ConvNextMicro só-CE `datasets` (`train_convnextmicro`); (1) baselines clássicos
-`datasets×teachers×{hinton, rkd_dist, rkd_angle}`; (2) Graph-RKD
-`datasets×teachers×embeddings×objectives` com busca de N. As fases 1 e 2 usam o
-`best.pth` do professor da fase 0a.
+A campanha é de **metric learning** (split disjunto, recall@K) — ver
+[`COMO_RODAR_EXPERIMENTOS.md`](../COMO_RODAR_EXPERIMENTOS.md). `run_all_experiments_metric.py`
+roda a grade em ordem de dependência, tudo no W&B: (0a) teachers métricos
+`datasets×teachers` (`finetune_metric`, embedding+triplet); (0b) baseline
+triplet-puro `datasets` (`train_metric_baseline`); (1) clássicos
+`datasets×teachers×{rkd_dist, rkd_angle}` (triplet+RKD com warmup); (2) Graph-RKD
+`datasets×teachers×embeddings×objectives` (triplet+grafo) com busca de N
+(selecionada por **recall@1 de validação**). As fases 1 e 2 usam o `best.pth`
+do teacher da fase 0a.
 
 ```bash
-WANDB_ENTITY=<voce> bash examples/run_all_experiments.sh --dry_run   # plano + contagem
-WANDB_ENTITY=<voce> bash examples/run_all_experiments.sh             # roda tudo
-# por fase (dependem dos professores):
-python run_all_experiments.py --phases teachers
-python run_all_experiments.py --phases ce_baseline classic graph ...
+WANDB_ENTITY=<voce> bash examples/run_all_experiments_metric.sh --dry_run   # plano
+WANDB_ENTITY=<voce> bash examples/run_all_experiments_metric.sh             # roda tudo
+# por fase (dependem dos teachers):
+python run_all_experiments_metric.py --phases teachers
+python run_all_experiments_metric.py --phases baseline classic graph ...
 ```
 
-Contagem (defaults, K=128, orçamento 1024 → N_max=17 → 5 candidatos log, 1 seed):
-4 professores + 2 CE + 12 clássicos + 96 Graph-RKD = **114 experimentos**.
+Contagem (defaults, K=128, orçamento 1024 → N_max=17 → 5 candidatos log, R=3):
+4 teachers + 2 baseline + 8 clássicos + 256 Graph-RKD = **270 experimentos**.
+(Os scripts `*_metric.py` substituem os de classificação; estes permanecem no
+repo mas não são a campanha.)
 
 ## Experimentos: loss padrão + Graph-RKD, busca binária de N
 
