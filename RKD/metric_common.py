@@ -29,12 +29,10 @@ __all__ = ["DATASETS", "build_metric_loaders", "embed", "evaluate_recall_splits"
            "recall_log_dict", "retrieval_metrics", "score_of", "SELECT_METRICS",
            "RECALL_K"]
 
-# --select_metric -> métrica de validação p/ seleção (primária = mAP@R, Musgrave
-# et al. 2020). Chaves "fixas" mapeiam direto; ndcg/prec/f1 resolvem para o
-# maior K disponível (ver score_of).
-SELECT_METRICS = {"mapr": "mAP@R", "rprec": "R_precision", "mrr": "MRR",
-                  "recall1": "recall@1", "ndcg": "nDCG@", "prec": "precision@",
-                  "f1": "F1@"}
+# Conjunto de métricas escolhido p/ DML retrieval: Recall@K (curva convencional),
+# R-Precision e mAP@R (sensíveis à ordenação de todos os relevantes). Primária =
+# mAP@R (Musgrave et al. 2020). --select_metric mapeia para a chave da métrica.
+SELECT_METRICS = {"mapr": "mAP@R", "rprec": "R_precision", "recall1": "recall@1"}
 
 # chave -> (classe *Metric, marcador de download sob --data)
 DATASETS = {
@@ -112,12 +110,11 @@ def embed(net, images, l2=True):
 def retrieval_metrics(embeddings, labels, K):
     """Métricas de retrieval/reranking a partir dos embeddings + rótulos.
 
-    Relevância = mesma classe (binária). Retorna dict com:
-      * recall@k (para cada k em K) — há vizinho relevante no top-k;
-      * R_precision e mAP@R — sensíveis à ORDENAÇÃO de todos os relevantes
-        (R_i = nº de relevantes da query); recomendados por Musgrave et al. (2020);
-      * nDCG (no maior K) — ganho descontado por posição;
-      * MRR — recíproco da posição do 1º relevante.
+    Relevância = mesma classe (binária). Conjunto escolhido p/ DML retrieval:
+      * recall@k (para cada k em K) — curva convencional (há vizinho relevante
+        no top-k); comparabilidade com a literatura;
+      * R_precision e mAP@R — sensíveis à ORDENAÇÃO de todos os R relevantes da
+        query; recomendados por Musgrave et al. (2020), com mAP@R como primária.
     """
     labels = labels.view(-1)
     N = embeddings.size(0)
@@ -134,55 +131,20 @@ def retrieval_metrics(embeddings, labels, K):
     Rf = R.float().clamp(min=1)
     rank_mask = (torch.arange(kmax).unsqueeze(0) < R.unsqueeze(1)).float()
 
-    disc = 1.0 / torch.log2(pos + 1.0)              # desconto por posição (nDCG)
-    cdisc = torch.cumsum(disc, dim=0)
-    out = {}
-    for k in K:
-        kc = min(k, kmax)
-        hits_k = correct[:, :kc].sum(1)
-        # recall@k estilo DML = taxa de acerto (>=1 relevante no top-k)
-        out[f"recall@{k}"] = (hits_k > 0).float().mean().item()
-        # precision@k (IR) = relevantes no top-k / k
-        out[f"precision@{k}"] = (hits_k / kc)[valid].mean().item()
-        # F1@k = média harmônica de precision@k e IR-recall@k (= rel no top-k / R)
-        p = hits_k / kc
-        r = (hits_k / Rf).clamp(max=1.0)
-        f1 = torch.where((p + r) > 0, 2 * p * r / (p + r), torch.zeros(N))
-        out[f"F1@{k}"] = f1[valid].mean().item()
-        # nDCG@k (relevância binária)
-        dcg = (correct[:, :kc] * disc[:kc].unsqueeze(0)).sum(1)
-        ideal_n = R.clamp(max=kc)
-        idcg = torch.where(ideal_n > 0, cdisc[(ideal_n - 1).clamp(min=0)], torch.ones(N))
-        out[f"nDCG@{k}"] = torch.where(idcg > 0, dcg / idcg,
-                                       torch.zeros(N))[valid].mean().item()
-
-    # métricas sensíveis à ordenação de TODOS os relevantes
+    # recall@k convencional (taxa de acerto: >=1 relevante no top-k)
+    out = {f"recall@{k}": (correct[:, :min(k, kmax)].sum(1) > 0).float().mean().item()
+           for k in K}
+    # sensíveis à ordenação de TODOS os R relevantes da query
     out["R_precision"] = ((correct * rank_mask).sum(1) / Rf)[valid].mean().item()
     prec_at = torch.cumsum(correct, dim=1) / pos.unsqueeze(0)
     out["mAP@R"] = ((prec_at * correct * rank_mask).sum(1) / Rf)[valid].mean().item()
-
-    has = correct.bool().any(1)
-    first = correct.float().argmax(1) + 1
-    mrr = torch.where(has, 1.0 / first.float(), torch.zeros(N))
-    sel = valid & has
-    out["MRR"] = mrr[sel].mean().item() if sel.any() else 0.0
     return out
 
 
 def score_of(split_metrics, select_metric):
-    """Escalar de seleção a partir do dict de um split.
-
-    'mapr'->mAP@R, 'rprec'->R_precision, 'mrr'->MRR, 'recall1'->recall@1;
-    'ndcg'/'prec'/'f1' resolvem para o MAIOR K disponível (ex.: nDCG@8).
-    """
-    target = SELECT_METRICS[select_metric]
-    if target in split_metrics:
-        return split_metrics[target]
-    # prefixo "<nome>@" -> escolhe o maior K presente
-    ks = [int(key.split("@")[1]) for key in split_metrics if key.startswith(target)]
-    if not ks:
-        raise KeyError(f"métrica '{select_metric}' ({target}) ausente")
-    return split_metrics[f"{target}{max(ks)}"]
+    """Escalar de seleção: 'mapr'->mAP@R (primária), 'rprec'->R_precision,
+    'recall1'->recall@1."""
+    return split_metrics[SELECT_METRICS[select_metric]]
 
 
 @torch.no_grad()

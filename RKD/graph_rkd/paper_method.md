@@ -293,20 +293,19 @@ CUB-200). Because the disjoint split provides no validation set, we hold out a
 **disjoint subset of the training classes** ($20\%$, fixed seed) as validation —
 so validation classes are unseen during training.
 
-**Evaluation metrics.** Relevance is binary (same class). We report a suite of
-retrieval and ranking metrics:
-- **Recall@K** ($K\in\{1,2,4,8\}$) — the metric-learning hit-rate: whether a
-  same-class neighbor appears in the top $K$.
-- **Precision@K** and **F1@K** — IR precision (relevant in top $K$, over $K$)
-  and its harmonic mean with IR recall (relevant in top $K$, over the number of
-  relevants $R$).
-- **nDCG@K** — position-discounted gain, rewarding relevants ranked higher.
-- **MRR** — reciprocal rank of the first relevant.
+**Evaluation metrics.** Relevance is binary (same class). We report a small,
+purposeful set:
+- **Recall@K** ($K\in\{1,2,4,8\}$) — the conventional metric-learning hit-rate
+  (a same-class neighbor in the top $K$), kept for comparability with the DML
+  literature.
 - **R-Precision** and **mAP@R** — *order-sensitive over all relevants*: for each
   query they score the full ranking of its $R$ same-class items, not just whether
-  one appears in the top $K$. Following Musgrave et al. (2020, *A Metric Learning
-  Reality Check*), which shows Recall@1 is saturated and misleading, we adopt
-  **mAP@R as the primary metric**.
+  one appears in the top $K$.
+
+Following Musgrave et al. (2020, *A Metric Learning Reality Check*), which shows
+Recall@1 is saturated and misleading, **mAP@R is our primary metric**. We omit
+precision@K, F1@K, nDCG, and MRR: in binary-relevance image retrieval they add
+little beyond Recall@K / mAP@R and are not standard in this setting.
 
 Model selection — the checkpoint kept for final evaluation and the relational
 order $N$ — relies **only on the validation mAP@R** (configurable); the test set
