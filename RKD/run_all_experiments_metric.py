@@ -45,6 +45,8 @@ def build_parser():
     p.add_argument("--edge_budget", type=float, default=1024.0)
     p.add_argument("--seeds", type=int, default=3)
     p.add_argument("--select", choices=["argmax", "1se"], default="argmax")
+    p.add_argument("--select_metric", default="mapr",
+                   help="métrica de validação p/ seleção (default mAP@R)")
     p.add_argument("--rel_warmup_frac", type=float, default=0.1)
     p.add_argument("--recall", type=int, nargs="+", default=[1, 2, 4, 8])
 
@@ -83,7 +85,8 @@ def phase_teachers(opts, dry):
                  lambda a=arch, d=ds, sd=s: finetune.run_with_params({
                      "arch": a, "dataset": d, "data": opts.data,
                      "epochs": opts.teacher_epochs, "batch": opts.batch,
-                     "recall": opts.recall, "amp": opts.amp, "seed": opts.seed,
+                     "recall": opts.recall, "select_metric": opts.select_metric,
+                     "amp": opts.amp, "seed": opts.seed,
                      "save_dir": sd, "resume": os.path.join(sd, "last.pth"),
                      "wandb_project": opts.teachers_project,
                      "wandb_entity": opts.wandb_entity, "wandb_mode": opts.wandb_mode,
@@ -98,7 +101,8 @@ def phase_baseline(opts, dry):
         _run(f"metric baseline @ {ds}", s,
              lambda d=ds, sd=s: baseline.run_with_params({
                  "dataset": d, "data": opts.data, "epochs": opts.student_epochs,
-                 "batch": opts.batch, "recall": opts.recall, "amp": opts.amp,
+                 "batch": opts.batch, "recall": opts.recall,
+                 "select_metric": opts.select_metric, "amp": opts.amp,
                  "seed": opts.seed, "save_dir": sd,
                  "resume": os.path.join(sd, "baseline_last.pth"),
                  "wandb_project": opts.students_project,
@@ -124,8 +128,8 @@ def phase_classic(opts, dry):
                          "teacher_load": t, "graph_rkd_mode": "off",
                          "triplet_ratio": 1.0, "rel_warmup_frac": opts.rel_warmup_frac,
                          "epochs": opts.student_epochs, "batch": opts.batch,
-                         "recall": opts.recall, "amp": opts.amp, "seed": opts.seed,
-                         "save_dir": sd, "resume": os.path.join(sd, "student_last.pth"),
+                         "recall": opts.recall, "select_metric": opts.select_metric,
+                         "amp": opts.amp, "seed": opts.seed, "save_dir": sd, "resume": os.path.join(sd, "student_last.pth"),
                          "wandb_project": opts.students_project,
                          "wandb_entity": opts.wandb_entity, "wandb_mode": opts.wandb_mode,
                          "wandb_run_name": f"classic-{nm}-{a}-{d}",
@@ -147,6 +151,7 @@ def phase_graph(opts, dry):
                 "--search_epochs", str(opts.search_epochs),
                 "--final_epochs", str(opts.student_epochs),
                 "--seeds", str(opts.seeds), "--select", opts.select,
+                "--select_metric", opts.select_metric,
                 "--rel_warmup_frac", str(opts.rel_warmup_frac), "--seed", str(opts.seed),
                 "--recall", *[str(k) for k in opts.recall],
                 "--modes", *opts.objectives, "--methods", *opts.embeddings,

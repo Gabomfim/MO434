@@ -16,8 +16,8 @@ import torchvision.transforms as transforms
 import wandb
 import metric.pairsampler as pair
 from metric.loss import L2Triplet
-from metric_common import (DATASETS, RECALL_K, build_metric_loaders, embed,
-                           evaluate_recall_splits, recall_log_dict)
+from metric_common import (DATASETS, RECALL_K, SELECT_METRICS, build_metric_loaders,
+                           embed, evaluate_recall_splits, recall_log_dict, score_of)
 from model import ConvNextMicro
 from tqdm import tqdm
 from wandb_artifacts import log_model_artifact
@@ -52,6 +52,7 @@ def build_parser():
     p.add_argument("--num_image_per_class", type=int, default=5)
     p.add_argument("--iter_per_epoch", type=int, default=100)
     p.add_argument("--recall", type=int, nargs="+", default=RECALL_K)
+    p.add_argument("--select_metric", choices=sorted(SELECT_METRICS), default="mapr")
     p.add_argument("--eval_every", type=int, default=5)
 
     p.add_argument("--amp", action="store_true")
@@ -179,16 +180,15 @@ def run_experiment(opts):
 
         metrics = evaluate_recall_splits(model, loaders, device, l2, opts.recall,
                                          tag=f"E{epoch} ")
-        val_r1 = metrics["val"][f"recall@{primary}"]
-        improved = val_r1 > best_val
+        val_score = score_of(metrics["val"], opts.select_metric)
+        improved = val_score > best_val
         if improved:
-            best_val = val_r1
+            best_val = val_score
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-        print(f"[Epoch {epoch}] val recall@{primary}={val_r1*100:.2f} "
-              f"test={metrics['test'][f'recall@{primary}']*100:.2f} best_val={best_val*100:.2f}")
+        print(f"[Epoch {epoch}] val {opts.select_metric}={val_score*100:.2f} "
+              f"(test mAP@R={metrics['test']['mAP@R']*100:.2f}) best_val={best_val*100:.2f}")
         run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
-                 "val/best_recall@%d" % primary: best_val,
-                 **recall_log_dict(metrics)}, step=epoch)
+                 "val/best_score": best_val, **recall_log_dict(metrics)}, step=epoch)
 
         if opts.save_dir:
             os.makedirs(opts.save_dir, exist_ok=True)
@@ -210,11 +210,13 @@ def run_experiment(opts):
     for s, m in final.items():
         for k, v in m.items():
             run.summary[f"final_{s}_{k}"] = v
-    run.summary["best_val_recall@%d" % primary] = best_val
+    run.summary["best_val_score"] = best_val
+    run.summary["select_metric"] = opts.select_metric
     print("Done baseline. " + " | ".join(
-        f"{s} r@{primary}={m[f'recall@{primary}']*100:.2f}" for s, m in final.items()))
+        f"{s} mAP@R={m['mAP@R']*100:.2f}" for s, m in final.items()))
     run.finish()
-    return {"best_val_recall1": best_val, "final": final}
+    return {"best_val_score": best_val, "select_metric": opts.select_metric,
+            "final": final}
 
 
 def run_with_cli_args(cli_args):

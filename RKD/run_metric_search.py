@@ -32,6 +32,8 @@ def build_parser():
     p.add_argument("--base", type=int, default=2)
     p.add_argument("--seeds", type=int, default=1)
     p.add_argument("--select", choices=["argmax", "1se"], default="argmax")
+    p.add_argument("--select_metric", default="mapr",
+                   help="métrica de validação p/ selecionar N (default mAP@R)")
     p.add_argument("--graph_rkd_ratio", type=float, default=None)
     p.add_argument("--graph_rkd_sampling", choices=["partition", "random", "log"],
                    default="log")
@@ -64,8 +66,8 @@ def run_one(opts, mode, method, n_nodes, epochs, tag, seed):
     cached = load_result(save_dir)
     if cached is not None:
         print(f"   [skip|cache] {mode}/{method} N={n_nodes} {tag} s{seed} "
-              f"-> val r@1={cached['best_val_recall1']*100:.2f}")
-        return float(cached["best_val_recall1"])
+              f"-> val {opts.select_metric}={cached['best_val_score']*100:.2f}")
+        return float(cached["best_val_score"])
     ratio = opts.graph_rkd_ratio if opts.graph_rkd_ratio is not None \
         else _default_ratio(mode)
     name = f"{opts.dataset}-{opts.teacher_arch}-{mode}-{method}-N{n_nodes}-{tag}-s{seed}"
@@ -73,7 +75,8 @@ def run_one(opts, mode, method, n_nodes, epochs, tag, seed):
         "dataset": opts.dataset, "data": opts.data, "teacher_arch": opts.teacher_arch,
         "teacher_load": opts.teacher_load, "teacher_artifact": opts.teacher_artifact,
         "batch": opts.batch, "epochs": epochs, "lr": opts.lr, "seed": seed,
-        "recall": opts.recall, "triplet_ratio": opts.triplet_ratio,
+        "recall": opts.recall, "select_metric": opts.select_metric,
+        "triplet_ratio": opts.triplet_ratio,
         "dist_ratio": 0.0, "angle_ratio": 0.0, "rel_warmup_frac": opts.rel_warmup_frac,
         "graph_rkd_mode": mode, "graph_rkd_method": method,
         "graph_rkd_nodes": n_nodes, "graph_rkd_ratio": ratio,
@@ -86,8 +89,8 @@ def run_one(opts, mode, method, n_nodes, epochs, tag, seed):
         "wandb_tags": ["graph-rkd", "metric", mode, method, tag, f"N{n_nodes}"],
     }
     res = distill.run_with_params(params)
-    val = float(res["best_val_recall1"])
-    mark_done(save_dir, {"best_val_recall1": val})
+    val = float(res["best_val_score"])
+    mark_done(save_dir, {"best_val_score": val})
     return val
 
 
