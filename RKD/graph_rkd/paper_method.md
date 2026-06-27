@@ -149,6 +149,10 @@ relational geometry to the student through two complementary objectives.
   temperature $\tau$. This bounds the number of inter-graph comparisons to
   $G\cdot M$ and tends to transfer relational structure more effectively.
 
+In the metric-learning setting both graph objectives are added to a **triplet
+task loss** on the student, with a warm-up that balances the relational term
+against the triplet (see *Training configuration*); there is no logit/KD term.
+
 ## Choosing the relational order $N$
 
 The relational order $N$ is the central hyperparameter of the method. Its
@@ -178,8 +182,9 @@ $$\mathcal{C} \;=\; \{\,n_{\min},\; b\,n_{\min},\; b^2 n_{\min},\;\dots,\; N_{\m
 which contains $\approx\log_b N_{\max}$ points — the *same* training budget a
 binary search would spend — but reveals the shape of the quality–$N$ curve
 without assuming monotonicity. Each candidate is trained (short schedule) with
-$R$ seeds; its score is the mean best validation recall@1 (test is never used for
-selection). We then pick $N^\*$ either by $\arg\max$ or, for parsimony, by the
+$R$ seeds; its score is the mean best validation **mAP@R** (our primary metric;
+configurable, and test is never used for selection). We then pick $N^\*$ either by
+$\arg\max$ or, for parsimony, by the
 **one-standard-error rule** — the smallest $N$ whose mean score is within one
 standard error of the best, preferring cheaper (smaller-$N$) configurations when
 the difference is not statistically significant. A final long run is trained at
@@ -191,7 +196,7 @@ configuration is robust but still costs several trainings each time. A central
 goal of this work is therefore to **derive, empirically, a simple rule that
 predicts the quality-optimal $N$ directly from the minibatch size $K$** — the
 quality counterpart of the closed-form compute ceiling $N_{\max}\le 2E/K+1$. By
-recording the selected $N^\*$ (and the full recall@1-vs-$N$ curves) across batch
+recording the selected $N^\*$ (and the full mAP@R-vs-$N$ curves) across batch
 sizes $K$, datasets, teachers, and the embedding/objective variants, we intend to
 fit a low-parameter relationship $N^\*\approx f(K)$ (e.g., affine in $K$, in
 $1/K$, or in $\log K$) and report its fit quality. If such a rule holds, future
@@ -267,7 +272,7 @@ N_max <- largest N with K (N-1)/2 <= E         # = floor(2E/K + 1), no training
 C <- { n_min, b*n_min, b^2*n_min, ..., N_max }  (sorted, unique)
 # 3) seed-averaged validation quality of each candidate
 for N in C:
-    vals <- [ best_val_recall@1( distill(order=N, short schedule, seed=r) ) : r in 1..R ]
+    vals <- [ best_val_mAP@R( distill(order=N, short schedule, seed=r) ) : r in 1..R ]
     mean[N] <- mean(vals);  sem[N] <- std(vals) / sqrt(R)
 # 4) selection
 if rule = argmax:
@@ -309,8 +314,8 @@ little beyond Recall@K / mAP@R and are not standard in this setting.
 
 Model selection — the checkpoint kept for final evaluation and the relational
 order $N$ — relies **only on the validation mAP@R** (configurable); the test set
-is read once, with the validation-selected checkpoint, and the full metric suite
-is reported on train, validation, and test.
+is read once, with the validation-selected checkpoint, and all three metrics
+(Recall@K, R-Precision, mAP@R) are reported on train, validation, and test.
 
 ## Preprocessing and data augmentation
 
@@ -364,4 +369,4 @@ triplet + warm-up. A from-scratch ConvNextMicro trained with **triplet only**
 
 Each (objective $\times$ embedding) combination is run separately, and within
 each the order $N$ is selected by the budget-bounded log-spaced sweep of
-Algorithm 4 on the **validation recall@1**.
+Algorithm 4 on the **validation mAP@R**.
