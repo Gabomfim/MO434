@@ -186,6 +186,19 @@ the difference is not statistically significant. A final long run is trained at
 $N^\*$. This costs $O(R\log_b N_{\max})$ trainings, is robust to non-monotonic and
 noisy quality curves, and exposes the curve for inspection.
 
+**Towards a simple rule for $N^\*(K)$.** Running the log-spaced sweep per
+configuration is robust but still costs several trainings each time. A central
+goal of this work is therefore to **derive, empirically, a simple rule that
+predicts the quality-optimal $N$ directly from the minibatch size $K$** — the
+quality counterpart of the closed-form compute ceiling $N_{\max}\le 2E/K+1$. By
+recording the selected $N^\*$ (and the full recall@1-vs-$N$ curves) across batch
+sizes $K$, datasets, teachers, and the embedding/objective variants, we intend to
+fit a low-parameter relationship $N^\*\approx f(K)$ (e.g., affine in $K$, in
+$1/K$, or in $\log K$) and report its fit quality. If such a rule holds, future
+runs can set $N$ from $K$ in closed form and skip the sweep entirely, reducing
+hyperparameter tuning to a single formula. This rule is to be established
+through the experiments rather than assumed a priori.
+
 ## Algorithms
 
 **Algorithm 1 — Permutation-invariant graph embedding.** Maps an $N\times N$
@@ -216,14 +229,16 @@ G <- clamp(G, g_min, g_max)
 return G random N-subsets of {1, ..., K}   # (or floor(K/N) disjoint, if partition)
 ```
 
-**Algorithm 3 — Graph-RKD distillation step.** Standard cross-entropy plus the
-relational graph loss; teacher is frozen.
+**Algorithm 3 — Graph-RKD distillation step (metric learning).** Triplet task
+loss plus the warm-up-balanced relational graph loss; teacher is frozen, no
+logits/cross-entropy (metric learning).
 
 ```
-Input : student f_s, teacher f_t, minibatch (X, y), order N, weight lambda_g,
-        objective in {regression, contrastive}, p, M, tau
-Z_s <- f_s.features(X)                       # node embeddings (B x d_s)
-Z_t <- f_t.features(X)   (no grad)           # node embeddings (B x d_t)
+Input : student f_s, teacher f_t, minibatch (X, y) with class-balanced sampling,
+        order N, weight lambda_g, objective in {regression, contrastive}, p, M,
+        tau, epoch e, warmup fraction w
+Z_s <- normalize(f_s.embedding(X))           # L2 embeddings (B x d_s)
+Z_t <- normalize(f_t.embedding(X)) (no grad) # L2 embeddings (B x d_t)
 { S_1, ..., S_G } <- sample graphs (Algorithm 2)
 for g = 1 .. G:                              # same node set on both sides
     e_s[g] <- GraphEmbedding( pdist_euclid(Z_s[S_g]) )      # Algorithm 1
@@ -233,9 +248,12 @@ if objective = regression:
 else:                                        # contrastive (InfoNCE, CRD-style)
     for g: logits <- [ sim(e_s[g], e_t[g]) ,  { sim(e_s[g], e_t[h]) : h in negs(g, M) } ] / tau
     L_rel <- mean_g  CrossEntropy(logits, target = 0)       # positive at index 0
-L <- CrossEntropy(f_s(X), y) + lambda_g * L_rel
+rel <- min(1, e / (w * total_epochs))        # warm-up: balances rel vs triplet
+L <- Triplet(Z_s, y) + rel * lambda_g * L_rel
 backprop and update f_s
 ```
+(Classic baselines replace `lambda_g * L_rel` by `lambda * RKD_distance` or
+`lambda * RKD_angle`, under the same triplet + warm-up.)
 
 **Algorithm 4 — Selecting $N$ (budget-bounded log-spaced sweep).** Binary search
 fixes only the compute ceiling (exact); the quality-driven choice is a log-spaced
