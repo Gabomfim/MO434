@@ -119,7 +119,9 @@ def mds_spectral_embedding(D, normalize=False, jitter=0.0):
     B = 0.5 * (B + B.transpose(-2, -1))             # força simetria (estabilidade)
     if jitter > 0:
         B = B + jitter * torch.eye(N, device=D.device, dtype=D.dtype)
-    eig = torch.linalg.eigvalsh(B)                  # crescente
+    # eigvalsh não tem kernel CUDA p/ Half (AMP); calcula em float32 e converte
+    # de volta. A decomposição espectral precisa de precisão plena de qualquer forma.
+    eig = torch.linalg.eigvalsh(B.float()).to(B.dtype)   # crescente
     eig = eig.flip(-1)                              # decrescente
     return eig.squeeze(0) if single else eig
 

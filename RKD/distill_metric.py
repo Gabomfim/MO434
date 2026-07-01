@@ -49,7 +49,7 @@ def build_parser():
     p = argparse.ArgumentParser(description="Metric distillation -> ConvNextMicro")
     p.add_argument("--dataset", choices=sorted(DATASETS), default="cars196")
     p.add_argument("--data", default="data")
-    p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--workers", type=int, default=4)
     p.add_argument("--val_class_frac", type=float, default=0.2)
 
     # student

@@ -108,5 +108,14 @@ def load_teacher(arch, num_classes, ckpt_path, device, strict=True):
     model = build_classifier(arch, num_classes, pretrained=False)
     blob = torch.load(ckpt_path, map_location=device)
     state = blob["model"] if isinstance(blob, dict) and "model" in blob else blob
+    if not strict:
+        # strict=False do PyTorch ignora apenas chaves faltando/sobrando, NÃO
+        # divergências de shape de uma chave presente nos dois lados. A cabeça
+        # classificadora (m.fc / classifier[2]) muda de nº de classes entre
+        # datasets e não é usada em metric learning, então descartamos qualquer
+        # param com shape incompatível e carregamos só o backbone/embedding.
+        msd = model.state_dict()
+        state = {k: v for k, v in state.items()
+                 if k in msd and v.shape == msd[k].shape}
     model.load_state_dict(state, strict=strict)
     return model.to(device)

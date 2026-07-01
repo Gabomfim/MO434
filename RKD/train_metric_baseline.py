@@ -33,7 +33,7 @@ def build_parser():
     p = argparse.ArgumentParser(description="Baseline metric ConvNextMicro (triplet)")
     p.add_argument("--dataset", choices=sorted(DATASETS), default="cars196")
     p.add_argument("--data", default="data")
-    p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--workers", type=int, default=4)
     p.add_argument("--val_class_frac", type=float, default=0.2)
 
     p.add_argument("--dims", type=int, nargs=4, default=[24, 48, 96, 192])
