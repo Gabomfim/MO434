@@ -1,4 +1,4 @@
-# Analysis — fills Section 7 of the paper (`MO434261.pdf`)
+# Analysis — fills Section 7 of the paper (`Graph-RKD-MO434.pdf`)
 
 These notebooks turn the W&B runs into the paper's tables/figures for hypotheses
 H0–H5. All real logic lives in `analysis_utils.py`; the notebooks are thin

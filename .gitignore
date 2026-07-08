@@ -291,3 +291,7 @@ sm_local_output/
 RKD/sm_local_output/
 plan.json
 RKD/plan.json
+
+# Arquivos de dataset (baixados/estagiados; ficam no S3, nunca no repo)
+*.tar
+*.tgz
