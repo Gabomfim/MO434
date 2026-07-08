@@ -36,6 +36,8 @@ import plan  # módulo irmão (RKD/sm/plan.py)
 
 RKD_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../RKD
 ENTRY_POINT = "sm/entry.py"
+# arquivo (objeto S3) por dataset -> canal de dados enxuto por job
+ARCHIVE = {"cars196": "Cars196.tar", "cub200": "CUB_200_2011.tgz"}
 
 
 def _stable_id(name):
@@ -117,7 +119,13 @@ def make_estimator(cfg, spec, sm_session, run_tag):
         kwargs.update(use_spot_instances=True,
                       max_wait=max(cfg["max_run"], cfg["max_wait"]))
     est = PyTorch(**kwargs)
-    inputs = {"data": cfg["data_s3"]} if cfg["data_s3"] else None
+    # canal de dados = APENAS o arquivo do dataset deste job (download enxuto);
+    # entry.py extrai. Se data_s3 apontar a uma árvore extraída, use-a direto.
+    inputs = None
+    if cfg["data_s3"]:
+        base = cfg["data_s3"].rstrip("/")
+        arch = ARCHIVE.get(spec["dataset"])
+        inputs = {"data": f"{base}/{arch}" if arch else cfg["data_s3"]}
     return est, inputs, _job_name(spec["name"], run_tag)
 
 

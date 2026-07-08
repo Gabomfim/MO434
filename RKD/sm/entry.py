@@ -15,27 +15,60 @@ W&B: precisa de ``WANDB_API_KEY`` no ambiente (o launcher repassa).
 """
 
 import argparse
+import glob
 import json
 import os
 import sys
+import tarfile
 
 # nomes de checkpoint "last" por trainer (p/ resume)
 LAST_NAME = {"teacher": "last.pth", "baseline": "baseline_last.pth",
              "distill": "student_last.pth"}
 
+# marcadores que indicam dataset JÁ extraído sob um diretório de dados
+MARKERS = [os.path.join("Cars196", "cars_annos.mat"),
+           os.path.join("CUB_200_2011", "images.txt")]
+
+
+def _has_dataset(d):
+    return any(os.path.exists(os.path.join(d, m)) for m in MARKERS)
+
+
+def _extract_archives(src, dst):
+    """Extrai todos os .tar/.tgz/.tar.gz de ``src`` em ``dst`` (idempotente)."""
+    archives = (glob.glob(os.path.join(src, "*.tar")) +
+                glob.glob(os.path.join(src, "*.tgz")) +
+                glob.glob(os.path.join(src, "*.tar.gz")))
+    os.makedirs(dst, exist_ok=True)
+    for a in archives:
+        print(f"[entry] extraindo {a} -> {dst}", flush=True)
+        with tarfile.open(a) as t:
+            t.extractall(dst)
+    return archives
+
 
 def resolve_data_dir():
-    """Diretório de dados: canal de input 'data' se montado; senão gravável p/
-    download automático (torchvision). Recomenda-se preparar o canal S3 uma vez
-    (ver README) — baixar em cada job paralelo é lento e as URLs upstream falham."""
+    """Diretório com datasets EXTRAÍDOS (Cars196/, CUB_200_2011/).
+
+    Aceita o canal de input montado como (a) árvore já extraída, ou (b) ARQUIVOS
+    (Cars196.tar / CUB_200_2011.tgz) — o modo recomendado p/ S3/SageMaker e para
+    plataformas de GPU alugada, pois são poucos objetos grandes (download rápido).
+    No caso (b) extrai uma vez num dir gravável. Sem canal, cai p/ download via
+    torchvision (URLs upstream podem falhar; ver README)."""
+    channel = None
     for env in ("SM_CHANNEL_DATA", "DATA_DIR"):
         v = os.environ.get(env)
         if v and os.path.isdir(v):
-            return v
-    mounted = "/opt/ml/input/data/data"
-    if os.path.isdir(mounted):
-        return mounted
-    fallback = "/opt/ml/data"                       # gravável no container
+            channel = v
+            break
+    if channel is None and os.path.isdir("/opt/ml/input/data/data"):
+        channel = "/opt/ml/input/data/data"
+
+    if channel and _has_dataset(channel):
+        return channel                              # (a) já extraído
+    if channel and _extract_archives(channel, "/opt/ml/data"):
+        return "/opt/ml/data"                       # (b) arquivos -> extrai
+    fallback = "/opt/ml/data"                       # (c) download em job
     os.makedirs(fallback, exist_ok=True)
     return fallback
 
