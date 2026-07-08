@@ -22,6 +22,7 @@ melhor recall@1 de VALIDAÇÃO; resumível (W&B + checkpoint).
 import argparse
 import math
 import os
+import time
 
 import torch
 import torch.optim as optim
@@ -250,6 +251,7 @@ def run_experiment(opts):
         # um termo silenciosamente-zerado deve ser detectável separadamente.
         sums = {"loss": 0, "triplet": 0, "dist": 0, "angle": 0, "graph": 0}
         raw_sums = {"triplet": 0, "dist": 0, "angle": 0, "graph": 0}
+        epoch_t0 = time.time()   # custo por passo (instrumentação §6 / per-order cost)
         pbar = tqdm(loaders["train"], ncols=100, desc=f"[MDistill {epoch}]")
         for images, labels in pbar:
             images, labels = images.to(device), labels.to(device)
@@ -285,6 +287,7 @@ def run_experiment(opts):
         loss_log = {f"train/{k}_loss": v / n for k, v in sums.items()}
         loss_log.update({f"train/{k}_loss_raw": v / n for k, v in raw_sums.items()})
         loss_log["train/rel_scale"] = rel
+        loss_log["train/step_time_ms"] = 1000.0 * (time.time() - epoch_t0) / max(1, n)
         if epoch % opts.eval_every and epoch != opts.epochs:
             run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],
                      **loss_log}, step=epoch)
