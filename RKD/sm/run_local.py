@@ -216,6 +216,13 @@ def build_parser():
     p.add_argument("--gate-teacher", choices=["resnet18", "convnext_tiny"])
     p.add_argument("--trimmed", action="store_true",
                    help="config enxuta (drop hybrid, λg={0.01,0.1,1}, N={3,4,8})")
+    # override da config do HEADLINE (fase 5) — escolha vinda das fases 2-4
+    p.add_argument("--headline-method", choices=["profile", "mds"])
+    p.add_argument("--headline-norm",
+                   choices=["per_graph", "minibatch", "none", "hybrid"])
+    p.add_argument("--headline-objective", choices=["regression", "contrastive"])
+    p.add_argument("--headline-nodes", type=int)
+    p.add_argument("--headline-lambda", type=float)
     p.add_argument("--data", default="data")
     p.add_argument("--data-s3", default=data_prep.DEFAULT_S3,
                    help="prefixo S3 com Cars196.tar/CUB_200_2011.tgz; "
@@ -249,6 +256,9 @@ def main(argv=None):
         student_epochs=a.student_epochs, search_epochs=a.search_epochs,
         teacher_epochs=a.teacher_epochs,
         gate_dataset=a.gate_dataset, gate_teacher=a.gate_teacher,
+        headline_method=a.headline_method, headline_norm=a.headline_norm,
+        headline_objective=a.headline_objective, headline_nodes=a.headline_nodes,
+        headline_lambda=a.headline_lambda,
         wandb_entity=a.wandb_entity, wandb_project=a.wandb_project)
     cfg.update(data=a.data, wandb_mode=a.wandb_mode)
 

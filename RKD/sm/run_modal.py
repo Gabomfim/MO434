@@ -113,7 +113,10 @@ def main(phases: str = "teachers phase0 phase1",
          wandb_project: str = "graph-rkd",
          data_s3: str = "s3://graph-rkd-832271495954/graph-rkd/data",
          only: str = "", student_epochs: int = 0, search_epochs: int = 0,
-         trimmed: bool = False):
+         trimmed: bool = False,
+         headline_method: str = "", headline_norm: str = "",
+         headline_objective: str = "", headline_nodes: int = 0,
+         headline_lambda: float = 0.0):
     """``only`` = filtro (substrings separadas por vírgula) sobre os NOMES dos jobs,
     p/ (re)rodar um subconjunto — ex.: --only lg100-s0 roda só aquele ponto de λg.
     Se o filtro excluir os teachers, eles são pulados (usa-se o artefato W&B).
@@ -128,6 +131,16 @@ def main(phases: str = "teachers phase0 phase1",
         ov["student_epochs"] = student_epochs
     if search_epochs:
         ov["search_epochs"] = search_epochs
+    if headline_method:
+        ov["headline_method"] = headline_method
+    if headline_norm:
+        ov["headline_norm"] = headline_norm
+    if headline_objective:
+        ov["headline_objective"] = headline_objective
+    if headline_nodes:
+        ov["headline_nodes"] = headline_nodes
+    if headline_lambda:
+        ov["headline_lambda"] = headline_lambda
     cfg = plan.merged_config(trimmed=trimmed, **ov)
     jobs = plan.build_plan(cfg, phases.split())
     specs = []
