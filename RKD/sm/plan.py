@@ -79,8 +79,26 @@ DEFAULTS = dict(
 )
 
 
-def merged_config(**overrides):
+# Config ENXUTA derivada da iteração no Modal (gate + dev), p/ o run completo local:
+#   * drop `hybrid` (pior norm consistentemente);
+#   * λg pequeno — 3 pontos em vez de 6 (o sinal vive em λg baixo);
+#   * N ∈ {3,4,8} — dropa 16/17 (MDS degenera >90% lá, e são caros);
+#   * headline = mds/regression/per_graph/N4/λ0.01 (melhor no dev — reconfirmar no conv).
+# Reduz ~pela metade as fases de busca (2/3/4); a fase 5 (headline) permanece.
+TRIMMED = dict(
+    norms=["per_graph", "minibatch", "none"],
+    lambda_grid=[0.01, 0.1, 1.0],
+    n_list=[3, 4, 8],
+    norm_nodes=[3, 4, 8],
+    headline_method="mds", headline_norm="per_graph",
+    headline_objective="regression", headline_nodes=4, headline_lambda=0.01,
+)
+
+
+def merged_config(trimmed=False, **overrides):
     cfg = dict(DEFAULTS)
+    if trimmed:
+        cfg.update(TRIMMED)
     cfg.update({k: v for k, v in overrides.items() if v is not None})
     return cfg
 

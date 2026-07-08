@@ -91,7 +91,8 @@ def main(phases: str = "teachers phase0 phase1",
          wandb_entity: str = "gabomfim-unicamp",
          wandb_project: str = "graph-rkd",
          data_s3: str = "s3://graph-rkd-832271495954/graph-rkd/data",
-         only: str = "", student_epochs: int = 0, search_epochs: int = 0):
+         only: str = "", student_epochs: int = 0, search_epochs: int = 0,
+         trimmed: bool = False):
     """``only`` = filtro (substrings separadas por vírgula) sobre os NOMES dos jobs,
     p/ (re)rodar um subconjunto — ex.: --only lg100-s0 roda só aquele ponto de λg.
     Se o filtro excluir os teachers, eles são pulados (usa-se o artefato W&B).
@@ -106,7 +107,7 @@ def main(phases: str = "teachers phase0 phase1",
         ov["student_epochs"] = student_epochs
     if search_epochs:
         ov["search_epochs"] = search_epochs
-    cfg = plan.merged_config(**ov)
+    cfg = plan.merged_config(trimmed=trimmed, **ov)
     jobs = plan.build_plan(cfg, phases.split())
     specs = []
     for s in jobs:

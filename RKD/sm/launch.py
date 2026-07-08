@@ -290,12 +290,15 @@ def build_parser():
     p.add_argument("--teacher-epochs", type=int)
     p.add_argument("--gate-dataset", choices=["cars196", "cub200"])
     p.add_argument("--gate-teacher", choices=["resnet18", "convnext_tiny"])
+    p.add_argument("--trimmed", action="store_true",
+                   help="config enxuta (drop hybrid, λg={0.01,0.1,1}, N={3,4,8})")
     return p
 
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
     cfg = plan.merged_config(
+        trimmed=a.trimmed,
         datasets=a.datasets, teachers=a.teachers, methods=a.methods,
         objectives=a.objectives, norms=a.norms, n_list=a.n_list,
         lambda_grid=a.lambda_grid, seeds=a.seeds,
