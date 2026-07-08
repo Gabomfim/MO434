@@ -279,3 +279,15 @@ RKD/artifacts/
 
 # Symlink local de dados na raiz (aponta p/ caminho absoluto da maquina)
 /data
+
+# WSL / artefatos de download do navegador
+*:Zone.Identifier
+*.crdownload
+
+# Saidas locais desta campanha (runner local / SageMaker local mode)
+experiments_local/
+RKD/experiments_local/
+sm_local_output/
+RKD/sm_local_output/
+plan.json
+RKD/plan.json
