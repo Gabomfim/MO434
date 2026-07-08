@@ -21,8 +21,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .embeddings import embed_graphs
-from .loss import sample_graphs
+from .embeddings import batch_distance_mean, embed_graphs, zscore_descriptor
+from .loss import norm_flags, sample_graphs
 
 __all__ = ["SampledGraphContrastiveLoss", "GraphContrastiveDistillLoss"]
 
@@ -80,7 +80,7 @@ class GraphContrastiveDistillLoss(nn.Module):
     def __init__(self, method="profile", n_nodes=8, sampling="partition",
                  graphs_per_step=None, alpha=0.5, g_min=None, g_max=None,
                  num_negatives=10, temperature=0.07,
-                 normalize=True, squared=False, sort_key="lex"):
+                 norm="per_graph", squared=False, sort_key="lex"):
         super().__init__()
         self.method = method
         self.n_nodes = n_nodes
@@ -89,15 +89,17 @@ class GraphContrastiveDistillLoss(nn.Module):
         self.alpha = alpha
         self.g_min = g_min
         self.g_max = g_max
-        self.normalize = normalize
+        self.norm = norm
+        self._normalize, self._use_scale, self._zscore = norm_flags(norm)
         self.squared = squared
         self.sort_key = sort_key
         self.nce = SampledGraphContrastiveLoss(temperature, num_negatives)
 
-    def _embed(self, node_emb_graphs):
-        return embed_graphs(node_emb_graphs, method=self.method,
-                            normalize=self.normalize, squared=self.squared,
-                            sort_key=self.sort_key)
+    def _embed(self, node_emb_graphs, batch_scale=None):
+        g = embed_graphs(node_emb_graphs, method=self.method,
+                         normalize=self._normalize, squared=self.squared,
+                         sort_key=self.sort_key, batch_scale=batch_scale)
+        return zscore_descriptor(g) if self._zscore else g
 
     def forward(self, student_emb, teacher_emb, graphs=None, generator=None):
         """student_emb/teacher_emb: ``(B, d)``."""
@@ -109,9 +111,11 @@ class GraphContrastiveDistillLoss(nn.Module):
                                    device=student_emb.device)
         G = graphs.shape[0]
 
-        g_s = self._embed(student_emb[graphs])               # âncora (student), grad
+        s_scale = batch_distance_mean(student_emb) if self._use_scale else None
+        g_s = self._embed(student_emb[graphs], batch_scale=s_scale)  # âncora, grad
         with torch.no_grad():
-            g_t = self._embed(teacher_emb[graphs])           # positivo/pool (teacher)
+            t_scale = batch_distance_mean(teacher_emb) if self._use_scale else None
+            g_t = self._embed(teacher_emb[graphs], batch_scale=t_scale)  # pos/pool
 
         idx = torch.arange(G, device=student_emb.device)     # positivo do grafo i = i
         return self.nce(g_s, g_t, g_t, exclude_index=idx, generator=generator)

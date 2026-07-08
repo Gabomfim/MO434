@@ -79,6 +79,10 @@ def build_parser():
     p.add_argument("--graph_rkd_mode", choices=["off", "regression", "contrastive"],
                    default="off")
     p.add_argument("--graph_rkd_method", choices=["profile", "mds"], default="profile")
+    p.add_argument("--graph_rkd_norm",
+                   choices=["per_graph", "minibatch", "none", "hybrid"],
+                   default="per_graph",
+                   help="esquema de normalização de escala do descritor (H2)")
     p.add_argument("--graph_rkd_nodes", type=int, default=8)
     p.add_argument("--graph_rkd_ratio", type=float, default=0.0)
     p.add_argument("--graph_rkd_sampling", choices=["partition", "random", "log"],
@@ -210,7 +214,7 @@ def run_experiment(opts):
     if opts.graph_rkd_mode != "off" and opts.graph_rkd_ratio > 0:
         common = dict(method=opts.graph_rkd_method, n_nodes=opts.graph_rkd_nodes,
                       sampling=opts.graph_rkd_sampling, alpha=opts.graph_rkd_alpha,
-                      g_max=opts.graph_rkd_gmax)
+                      g_max=opts.graph_rkd_gmax, norm=opts.graph_rkd_norm)
         graph_criterion = (GraphRKDLoss(**common) if opts.graph_rkd_mode == "regression"
                            else GraphContrastiveDistillLoss(
                                num_negatives=opts.num_negatives,
@@ -242,7 +246,10 @@ def run_experiment(opts):
     for epoch in range(start_epoch + 1, opts.epochs + 1):
         student.train()
         rel = rel_scale_at(epoch, opts.epochs, opts.rel_warmup_frac)
+        # Somatórios ponderados (o que entra na loss) e CRUS (não-ponderados, I7):
+        # um termo silenciosamente-zerado deve ser detectável separadamente.
         sums = {"loss": 0, "triplet": 0, "dist": 0, "angle": 0, "graph": 0}
+        raw_sums = {"triplet": 0, "dist": 0, "angle": 0, "graph": 0}
         pbar = tqdm(loaders["train"], ncols=100, desc=f"[MDistill {epoch}]")
         for images, labels in pbar:
             images, labels = images.to(device), labels.to(device)
@@ -251,11 +258,15 @@ def run_experiment(opts):
             with torch.autocast(device_type=device.split(":")[0],
                                 enabled=opts.amp and device == "cuda"):
                 s_emb, _ = embed(student, images, l2)
-                tri = opts.triplet_ratio * triplet(s_emb, labels)
-                dist = rel * opts.dist_ratio * dist_criterion(s_emb, t_emb)
-                angle = rel * opts.angle_ratio * angle_criterion(s_emb, t_emb)
-                graph = (rel * opts.graph_rkd_ratio * graph_criterion(s_emb, t_emb)
-                         if graph_criterion is not None else s_emb.new_zeros(()))
+                tri_raw = triplet(s_emb, labels)
+                dist_raw = dist_criterion(s_emb, t_emb)
+                angle_raw = angle_criterion(s_emb, t_emb)
+                graph_raw = (graph_criterion(s_emb, t_emb)
+                             if graph_criterion is not None else s_emb.new_zeros(()))
+                tri = opts.triplet_ratio * tri_raw
+                dist = rel * opts.dist_ratio * dist_raw
+                angle = rel * opts.angle_ratio * angle_raw
+                graph = rel * opts.graph_rkd_ratio * graph_raw
                 loss = tri + dist + angle + graph
             optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
@@ -265,10 +276,14 @@ def run_experiment(opts):
             for k, v in (("loss", loss), ("triplet", tri), ("dist", dist),
                          ("angle", angle), ("graph", graph)):
                 sums[k] += float(v)
+            for k, v in (("triplet", tri_raw), ("dist", dist_raw),
+                         ("angle", angle_raw), ("graph", graph_raw)):
+                raw_sums[k] += float(v)
             pbar.set_postfix(loss=f"{loss.item():.3f}")
 
         n = len(loaders["train"])
         loss_log = {f"train/{k}_loss": v / n for k, v in sums.items()}
+        loss_log.update({f"train/{k}_loss_raw": v / n for k, v in raw_sums.items()})
         loss_log["train/rel_scale"] = rel
         if epoch % opts.eval_every and epoch != opts.epochs:
             run.log({"epoch": epoch, "lr": optimizer.param_groups[0]["lr"],

@@ -12,11 +12,20 @@ __all__ = ['Cars196Metric', 'Cars196Classification']
 
 class Cars196Metric(ImageFolder):
     base_folder = 'car_ims'
-    img_url = 'http://imagenet.stanford.edu/internal/car196/car_ims.tgz'
+    # URL oficial do Stanford cai com frequência (redireciona p/ image-net.org ->
+    # 404). O torchvision.datasets.StanfordCars também NÃO baixa mais por isso.
+    # Default = URL do Stanford (funciona em algumas redes/cache); sobreponha por
+    # variável de ambiente p/ apontar a um mirror sem editar código. O md5 abaixo
+    # só bate se o mirror servir o .tgz/.mat canônico.
+    img_url = os.environ.get(
+        'CARS196_IMG_URL',
+        'http://imagenet.stanford.edu/internal/car196/car_ims.tgz')
     img_filename = 'car_ims.tgz'
     img_md5 = 'd5c8f0aa497503f355e17dc7886c3f14'
 
-    anno_url = 'http://imagenet.stanford.edu/internal/car196/cars_annos.mat'
+    anno_url = os.environ.get(
+        'CARS196_ANNO_URL',
+        'http://imagenet.stanford.edu/internal/car196/cars_annos.mat')
     anno_filename = 'cars_annos.mat'
     anno_md5 = 'b407c6086d669747186bd1d764ff9dbc'
 

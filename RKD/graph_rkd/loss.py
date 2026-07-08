@@ -17,10 +17,26 @@ tuplas). N vem da busca binária (ver node_search.find_best_n).
 import torch
 import torch.nn as nn
 
-from .embeddings import embed_graphs
+from .embeddings import (NORM_SCHEMES, batch_distance_mean, embed_graphs,
+                         zscore_descriptor)
 from .node_search import adaptive_num_graphs
 
-__all__ = ["GraphRKDLoss", "sample_graphs"]
+__all__ = ["GraphRKDLoss", "sample_graphs", "norm_flags"]
+
+
+def norm_flags(norm):
+    """Esquema de normalização -> (per_graph_normalize, usa_μ_batch, zscore).
+
+    Mapeia o eixo ``norm`` (EXPERIMENTS_EN §5 / H2) para os flags concretos que
+    ``embed_graphs`` e o z-score do descritor consomem. Compartilhado entre a
+    perda de regressão e a contrastiva.
+    """
+    if norm not in NORM_SCHEMES:
+        raise ValueError("norm deve ser um de %s" % (NORM_SCHEMES,))
+    return {"per_graph": (True, False, False),
+            "none": (False, False, False),
+            "minibatch": (False, True, False),
+            "hybrid": (False, True, True)}[norm]
 
 
 def sample_graphs(batch_size, n_nodes, sampling="partition", graphs_per_step=None,
@@ -64,14 +80,16 @@ class GraphRKDLoss(nn.Module):
         alpha/g_min/g_max: hiperparâmetros do ``sampling="log"`` (ver
             node_search.adaptive_num_graphs).
         p: ordem da norma de Minkowski usada na perda por grafo.
-        normalize: normaliza cada matriz de distância pela média (escala-invar.).
+        norm: esquema de normalização de escala — ``per_graph`` (média off-diag por
+            grafo, default), ``minibatch`` (μ_batch), ``none`` (crua) ou ``hybrid``
+            (μ_batch + z-score do descritor). Ver ``embeddings.NORM_SCHEMES`` / H2.
         squared: usa distâncias ao quadrado na matriz.
         sort_key: chave de ordenação do Método 1 (``"lex"`` por padrão).
     """
 
     def __init__(self, method="profile", n_nodes=8, sampling="partition",
                  graphs_per_step=None, alpha=0.5, g_min=None, g_max=None,
-                 p=2, normalize=True, squared=False, sort_key="lex"):
+                 p=2, norm="per_graph", squared=False, sort_key="lex"):
         super().__init__()
         if method not in ("profile", "mds"):
             raise ValueError("method deve ser 'profile' ou 'mds'")
@@ -83,14 +101,16 @@ class GraphRKDLoss(nn.Module):
         self.g_min = g_min
         self.g_max = g_max
         self.p = p
-        self.normalize = normalize
+        self.norm = norm
+        self._normalize, self._use_scale, self._zscore = norm_flags(norm)
         self.squared = squared
         self.sort_key = sort_key
 
-    def _embed(self, node_emb_graphs):
-        return embed_graphs(node_emb_graphs, method=self.method,
-                            normalize=self.normalize, squared=self.squared,
-                            sort_key=self.sort_key)
+    def _embed(self, node_emb_graphs, batch_scale=None):
+        g = embed_graphs(node_emb_graphs, method=self.method,
+                         normalize=self._normalize, squared=self.squared,
+                         sort_key=self.sort_key, batch_scale=batch_scale)
+        return zscore_descriptor(g) if self._zscore else g
 
     def forward(self, student_emb, teacher_emb, graphs=None, generator=None):
         """student_emb/teacher_emb: ``(B, d)``. ``graphs`` opcional ``(G, N)``;
@@ -102,11 +122,14 @@ class GraphRKDLoss(nn.Module):
                                    self.g_max, generator=generator,
                                    device=student_emb.device)
 
+        # μ_batch (escala cruzada) computado da matriz K×K inteira, por lado.
+        s_scale = batch_distance_mean(student_emb) if self._use_scale else None
         s_nodes = student_emb[graphs]                 # (G, N, d_s)
         with torch.no_grad():
+            t_scale = batch_distance_mean(teacher_emb) if self._use_scale else None
             t_nodes = teacher_emb[graphs]             # (G, N, d_t)
-            g_t = self._embed(t_nodes)
-        g_s = self._embed(s_nodes)
+            g_t = self._embed(t_nodes, batch_scale=t_scale)
+        g_s = self._embed(s_nodes, batch_scale=s_scale)
 
         # perda de Minkowski por grafo, média sobre grafos
         return torch.norm(g_s - g_t, p=self.p, dim=-1).mean()

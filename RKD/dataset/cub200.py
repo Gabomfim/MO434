@@ -11,7 +11,9 @@ __all__ = ['CUB2011Metric', 'CUB2011Classification']
 class CUB2011(ImageFolder):
     image_folder = 'CUB_200_2011/images'
     base_folder = 'CUB_200_2011/'
-    url = 'http://www.vision.caltech.edu/visipedia-data/CUB-200-2011/CUB_200_2011.tgz'
+    # URL antiga (vision.caltech.edu/visipedia-data) morreu (404). Mirror oficial
+    # atual da Caltech (redireciona p/ armazenamento assinado; mesmo md5 canônico).
+    url = 'https://data.caltech.edu/records/65de6-vp158/files/CUB_200_2011.tgz'
     filename = 'CUB_200_2011.tgz'
     tgz_md5 = '97eceeb196236b17998738112f37df78'
 

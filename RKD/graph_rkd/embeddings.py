@@ -24,9 +24,22 @@ import torch
 
 __all__ = [
     "pairwise_distance_matrix", "normalize_distance_matrix",
+    "batch_distance_mean", "zscore_descriptor", "NORM_SCHEMES",
     "node_profile_embedding", "mds_spectral_embedding",
     "node_profile_embedding_np", "embed_graphs",
 ]
+
+# Esquemas de normalização (eixo do EXPERIMENTS_EN §5 / hipótese H2):
+#   per_graph  — divide cada grafo pela sua própria média off-diagonal (escala
+#                por grafo; perde escala CRUZADA entre grafos).
+#   minibatch  — divide TODOS os grafos por μ_batch (média off-diagonal da matriz
+#                K×K do minibatch inteiro); restaura a escala cruzada. Espelha a
+#                μ-normalização do RkdDistance (batch-mean).
+#   none       — sem normalização (mantém a escala bruta das distâncias).
+#   hybrid     — μ_batch (escala cruzada) + descritor scale-invariante (z-score
+#                do descritor entre os grafos amostrados), recuperando também a
+#                invariância teacher/student.
+NORM_SCHEMES = ("per_graph", "minibatch", "none", "hybrid")
 
 
 def pairwise_distance_matrix(node_emb, squared=False, eps=1e-12):
@@ -38,7 +51,7 @@ def pairwise_distance_matrix(node_emb, squared=False, eps=1e-12):
 
 
 def normalize_distance_matrix(D, eps=1e-12):
-    """Divide cada matriz pela média das distâncias fora da diagonal.
+    """Divide cada matriz pela média das distâncias fora da diagonal (per-graph).
 
     Torna o embedding invariante à ESCALA das distâncias (essencial para comparar
     teacher e student, que vivem em espaços de dimensões diferentes), preservando
@@ -51,6 +64,33 @@ def normalize_distance_matrix(D, eps=1e-12):
     return D / mean
 
 
+def batch_distance_mean(node_emb, eps=1e-12):
+    """μ_batch — média das distâncias off-diagonal da matriz K×K do minibatch.
+
+    Escalar único (por lado teacher/student) usado pela normalização ``minibatch``
+    e ``hybrid``: restaura a escala CRUZADA entre grafos que a per-graph descarta.
+    """
+    B = node_emb.shape[0]
+    if B < 2:
+        return node_emb.new_tensor(1.0)
+    D = torch.cdist(node_emb, node_emb, p=2)
+    mean = D.sum() / (B * (B - 1))
+    return mean.clamp_min(eps)
+
+
+def zscore_descriptor(g, eps=1e-6):
+    """Padroniza o descritor de grafo entre os grafos amostrados (dim 0).
+
+    ``g`` ``(G, E)`` -> z-score por dimensão sobre os G grafos. Torna o descritor
+    invariante a escala/deslocamento (componente scale-invariante da norm hybrid).
+    """
+    if g.dim() != 2 or g.shape[0] < 2:
+        return g
+    mean = g.mean(dim=0, keepdim=True)
+    std = g.std(dim=0, keepdim=True).clamp_min(eps)
+    return (g - mean) / std
+
+
 def _remove_diagonal(D):
     """``(..., N, N)`` -> ``(..., N, N-1)`` removendo a diagonal de cada linha."""
     N = D.shape[-1]
@@ -58,7 +98,20 @@ def _remove_diagonal(D):
     return D[..., mask].reshape(*D.shape[:-2], N, N - 1)
 
 
-def node_profile_embedding(D, sort_key="lex", normalize=False):
+def _apply_norm(D, normalize, batch_scale, eps=1e-12):
+    """Aplica a normalização de escala à matriz de distâncias.
+
+    * ``batch_scale`` (escalar) fornecido -> normalização ``minibatch``/``hybrid``.
+    * senão ``normalize=True`` -> per-graph; ``False`` -> none.
+    """
+    if batch_scale is not None:
+        return D / batch_scale.clamp_min(eps)
+    if normalize:
+        return normalize_distance_matrix(D, eps=eps)
+    return D
+
+
+def node_profile_embedding(D, sort_key="lex", normalize=False, batch_scale=None):
     """Método 1 — Perfil Multidimensional de Nós Ordenado.
 
     Para cada nó: remove a diagonal e ordena suas distâncias (perfil de
@@ -74,8 +127,7 @@ def node_profile_embedding(D, sort_key="lex", normalize=False):
     single = D.dim() == 2
     if single:
         D = D.unsqueeze(0)
-    if normalize:
-        D = normalize_distance_matrix(D)
+    D = _apply_norm(D, normalize, batch_scale)
 
     off = _remove_diagonal(D)                       # (G, N, N-1)
     profiles = torch.sort(off, dim=-1).values       # ordena dentro de cada nó
@@ -99,7 +151,7 @@ def node_profile_embedding(D, sort_key="lex", normalize=False):
     return emb.squeeze(0) if single else emb
 
 
-def mds_spectral_embedding(D, normalize=False, jitter=0.0):
+def mds_spectral_embedding(D, normalize=False, jitter=0.0, batch_scale=None):
     """Método 2 — autovalores do MDS clássico (espectro da matriz de Gram).
 
     Dupla-centralização de D² -> Gram ``B = -1/2 · J D² J`` (J = I - 11ᵀ/N);
@@ -109,8 +161,7 @@ def mds_spectral_embedding(D, normalize=False, jitter=0.0):
     single = D.dim() == 2
     if single:
         D = D.unsqueeze(0)
-    if normalize:
-        D = normalize_distance_matrix(D)
+    D = _apply_norm(D, normalize, batch_scale)
 
     G, N, _ = D.shape
     D2 = D.pow(2)
@@ -127,18 +178,23 @@ def mds_spectral_embedding(D, normalize=False, jitter=0.0):
 
 
 def embed_graphs(node_emb_graphs, method="profile", normalize=True, squared=False,
-                 sort_key="lex"):
+                 sort_key="lex", batch_scale=None):
     """Embeddings de nós por grafo ``(G, N, d)`` -> embedding do grafo ``(G, *)``.
 
     method ``"profile"`` -> tamanho N·(N-1); ``"mds"`` -> tamanho N. O tamanho
     depende SÓ de N (não da dimensão dos features), então embeddings de
     teacher e student do mesmo grafo são diretamente comparáveis.
+
+    ``batch_scale`` (escalar) força a normalização ``minibatch``/``hybrid``
+    (divide todas as matrizes por esse μ_batch); quando None, usa ``normalize``
+    (per-graph se True, none se False).
     """
     D = pairwise_distance_matrix(node_emb_graphs, squared=squared)
     if method == "profile":
-        return node_profile_embedding(D, sort_key=sort_key, normalize=normalize)
+        return node_profile_embedding(D, sort_key=sort_key, normalize=normalize,
+                                      batch_scale=batch_scale)
     if method == "mds":
-        return mds_spectral_embedding(D, normalize=normalize)
+        return mds_spectral_embedding(D, normalize=normalize, batch_scale=batch_scale)
     raise ValueError("method deve ser 'profile' ou 'mds'")
 
 
