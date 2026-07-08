@@ -18,7 +18,7 @@ Exemplos:
     export WANDB_API_KEY=...
     # concorrência AUTO pela VRAM, todas as GPUs:
     python sm/run_local.py --phases teachers phase0 phase1 --data data \
-        --wandb-entity gabomfim-unicamp-org --wandb-project graph-rkd --amp
+        --wandb-entity gabomfim-unicamp --wandb-project graph-rkd --amp
     # fixar 6 jobs simultâneos:
     python sm/run_local.py --max-parallel 6 ...
 """
@@ -227,7 +227,7 @@ def build_parser():
     p.add_argument("--workers", type=int, default=0,
                    help="dataloader workers por job (0 = auto p/ não saturar a CPU)")
     p.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY",
-                                                            "gabomfim-unicamp-org"))
+                                                            "gabomfim-unicamp"))
     p.add_argument("--wandb-project", default="graph-rkd")
     p.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
                    default="online")

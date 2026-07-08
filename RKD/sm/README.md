@@ -18,7 +18,7 @@ come from `RKD/requirements.txt`.
 
 ## Two ways to run
 
-Both run the **same plan** (`plan.py`) and log to **`gabomfim-unicamp-org/graph-rkd`**.
+Both run the **same plan** (`plan.py`) and log to **`gabomfim-unicamp/graph-rkd`**.
 
 ### Option A — local GPU (no AWS) — `sm/run_local.sh`
 For whoever has a GPU + the datasets. Runs jobs sequentially, resumable.

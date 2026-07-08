@@ -55,7 +55,7 @@ offline — obtain it separately; the loader URL is env-overridable
 
 ## Running the experiments
 
-Everything logs to **W&B `gabomfim-unicamp-org/graph-rkd`**. Full details in
+Everything logs to **W&B `gabomfim-unicamp/graph-rkd`**. Full details in
 [`RKD/sm/README.md`](RKD/sm/README.md). The campaign is **staged** (per
 `EXPERIMENTS_EN.md` §3): `teachers phase0 phase1` is the gate — run it and check
 H0 before scaling to phases 2–5.
@@ -99,7 +99,7 @@ Runs the SageMaker container on a local GPU via Docker:
 ```bash
 export WANDB_API_KEY=...
 python RKD/sm/launch.py --launch --local --phases teachers phase0 phase1 \
-    --data-local data --wandb-entity gabomfim-unicamp-org
+    --data-local data --wandb-entity gabomfim-unicamp
 ```
 
 ## Setup

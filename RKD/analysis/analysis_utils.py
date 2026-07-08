@@ -1,6 +1,6 @@
 """Utilidades de análise para a campanha Graph-RKD (preenche a Seção 7 do paper).
 
-Puxa as runs do W&B (gabomfim-unicamp-org/graph-rkd), classifica cada run em um
+Puxa as runs do W&B (gabomfim-unicamp/graph-rkd), classifica cada run em um
 dos 5 alunos / config Graph-RKD, agrega por seeds (média ± sem) e produz as
 tabelas e figuras que a Seção 7 pede (H0–H5). Os notebooks só chamam estas
 funções. `pandas`/`matplotlib` são dependências; `wandb` é importado sob demanda.
@@ -17,7 +17,7 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 
-ENTITY = "gabomfim-unicamp-org"
+ENTITY = "gabomfim-unicamp"
 PROJECT = "graph-rkd"
 METRICS = ["mAP@R", "R_precision", "recall@1", "recall@2", "recall@4", "recall@8"]
 FIGDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")

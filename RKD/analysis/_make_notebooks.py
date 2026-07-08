@@ -2,7 +2,7 @@
 
 Os notebooks são finos: chamam ``analysis_utils`` (a lógica real e testável).
 Rode: python analysis/_make_notebooks.py  ->  escreve os .ipynb em analysis/.
-Requer que as runs estejam no W&B (gabomfim-unicamp-org/graph-rkd) para produzir
+Requer que as runs estejam no W&B (gabomfim-unicamp/graph-rkd) para produzir
 números; sem runs, as células de figura avisam "sem dados ainda" e não quebram.
 """
 
@@ -39,7 +39,7 @@ SETUP = ("code", "import sys, os\n"
 # --------------------------------------------------------------------------- #
 write("00_aggregate_results.ipynb", nb(
     ("md", "# 00 · Aggregate W&B runs → `results.csv`\n\n"
-           "Pulls every run from **gabomfim-unicamp-org/graph-rkd**, classifies each "
+           "Pulls every run from **gabomfim-unicamp/graph-rkd**, classifies each "
            "into one of the 5 students / Graph-RKD config, flattens config+summary, "
            "and writes `results.csv` used by the other notebooks. Needs `WANDB_API_KEY`."),
     SETUP,

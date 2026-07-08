@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 # OPÇÃO A — rodar os experimentos numa GPU LOCAL (sem AWS).
-# Loga no W&B gabomfim-unicamp-org/graph-rkd. Resumível.
+# Loga no W&B gabomfim-unicamp/graph-rkd. Resumível.
 #
 # Pré-requisitos (na máquina com GPU):
 #   1) uv sync            # instala torch/torchvision/wandb/kagglehub
@@ -31,4 +31,4 @@ cd "$(dirname "$0")/.."   # -> RKD/
 # AMP já vem ligado por job (plan defaults); não passar --amp aqui.
 exec python sm/run_local.py --phases $PHASES --data "$DATA" \
     --max-parallel "$MAX_PARALLEL" --per-job-gb "$PER_JOB_GB" \
-    --wandb-entity gabomfim-unicamp-org --wandb-project graph-rkd "$@"
+    --wandb-entity gabomfim-unicamp --wandb-project graph-rkd "$@"

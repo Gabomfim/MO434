@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 # OPÇÃO B — rodar os experimentos no AWS SageMaker (jobs em PARALELO).
-# Loga no W&B gabomfim-unicamp-org/graph-rkd.
+# Loga no W&B gabomfim-unicamp/graph-rkd.
 #
 # Pré-requisitos:
 #   1) cota g5.xlarge de TREINO aprovada (pendente — ver status da campanha)
@@ -34,4 +34,4 @@ cd "$(dirname "$0")/.."   # -> RKD/
 exec python sm/launch.py --phases $PHASES $LAUNCH_FLAG \
     --region "$REGION" --role "$ROLE_ARN" --bucket "$BUCKET" \
     --data-s3 "$DATA_S3" --instance-type ml.g5.xlarge \
-    --wandb-entity gabomfim-unicamp-org --wandb-project graph-rkd "$@"
+    --wandb-entity gabomfim-unicamp --wandb-project graph-rkd "$@"

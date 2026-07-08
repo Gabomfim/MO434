@@ -67,7 +67,7 @@ def train_job(spec: dict):
 
 @app.local_entrypoint()
 def main(phases: str = "teachers phase0 phase1",
-         wandb_entity: str = "gabomfim-unicamp-org",
+         wandb_entity: str = "gabomfim-unicamp",
          wandb_project: str = "graph-rkd",
          data_s3: str = "s3://graph-rkd-832271495954/graph-rkd/data"):
     sys.path.insert(0, os.path.join(RKD_DIR, "sm"))
