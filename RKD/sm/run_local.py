@@ -37,6 +37,7 @@ sys.path.insert(0, RKD)
 sys.path.insert(0, HERE)
 
 import plan  # noqa: E402
+import data_prep  # noqa: E402
 from experiment_ledger import is_done, mark_done  # noqa: E402
 
 LAST = {"teacher": "last.pth", "baseline": "baseline_last.pth",
@@ -214,6 +215,10 @@ def build_parser():
     p.add_argument("--gate-dataset", choices=["cars196", "cub200"])
     p.add_argument("--gate-teacher", choices=["resnet18", "convnext_tiny"])
     p.add_argument("--data", default="data")
+    p.add_argument("--data-s3", default=data_prep.DEFAULT_S3,
+                   help="prefixo S3 com Cars196.tar/CUB_200_2011.tgz; "
+                        "'' desliga o pull (usa dados locais / download do trainer)")
+    p.add_argument("--aws-profile", default=os.environ.get("AWS_PROFILE", "gabomfim"))
     p.add_argument("--save-root", default="experiments_local")
     p.add_argument("--max-parallel", type=int, default=0,
                    help="jobs simultâneos (0 = auto pela VRAM livre)")
@@ -245,6 +250,14 @@ def main(argv=None):
     cfg.update(data=a.data, wandb_mode=a.wandb_mode)
 
     jobs = plan.build_plan(cfg, a.phases)
+
+    # garante os datasets usados (puxa do S3 e extrai se ainda não estão locais)
+    datasets_used = sorted({s["dataset"] for s in jobs if s.get("dataset")})
+    if a.data_s3:
+        data_prep.ensure(a.data, datasets_used, a.data_s3, a.aws_profile)
+    else:
+        print("[data] --data-s3 vazio: usando dados locais / download do trainer")
+
     gpus = detect_gpus()
     if a.max_parallel > 0:
         max_parallel = a.max_parallel
