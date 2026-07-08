@@ -293,3 +293,63 @@ noted; all "beats/differs" claims must clear the noise floor):
   dataset, teacher, seed) and all metrics + instrumentation columns, so the paper's
   tables/plots can be regenerated deterministically.
 - A short `FINDINGS.md` mapping each hypothesis H0–H5 to its verdict and the evidence.
+
+---
+
+## 10. Execution amendments & findings (2026-07-08)
+
+These record how the plan was **adapted during execution**, and why. They amend
+§§5–8 above; where they conflict, these win.
+
+### 10.1 Run infrastructure (backends)
+The campaign is enumerated once as independent jobs (`RKD/sm/plan.py`, phases
+`0–5` plus cheap iteration phases `dev`/`conv`) and run through any of three
+backends that share that plan: a **parallel local runner** (`RKD/sm/run_local.py`
+— packs jobs per GPU by free VRAM, round-robins GPUs, 100% utilization), **Modal**
+(`RKD/sm/run_modal.py` — rented GPUs, no quota, server-side driver so runs survive
+local disconnects), and **AWS SageMaker** (`RKD/sm/launch.py`). *Reason:* AWS
+SageMaker GPU quota was denied for a new account (lack of history), so Modal is
+used for cheap iteration and a local GPU for the full run.
+
+### 10.2 Gate finding (H0) — reason for the amendments below
+On the gate slice (Cars-196 / R18 / profile / regression / minibatch / N=4,
+30 ep, 1 seed) Graph-RKD only stayed **at/above the triplet-only floor at very
+small λg (≈0.01)**; every λg ≥ 0.1 fell **below** the floor and hurt monotonically
+(see `PHASE_1_REPORT.md`). A cheap `dev` design-space probe (descriptor × objective
+× normalization at λg=0.01) then showed **`hybrid` normalization is consistently
+worst** and **regression is the more consistent objective**. This motivated the
+following.
+
+### 10.3 `search_epochs` bumped 30 → 60
+The 30-epoch search runs sat near the floor (test mAP@R ≈ 0.007 vs teacher 0.188),
+so λg/normalization/descriptor **selection was unreliable**. Search phases (2–4)
+now use **60 epochs** for a more discriminative signal. *(Cost trade-off accepted;
+the headline phase 5 stays at 120.)*
+
+### 10.4 Seeds unchanged; **report the median-mAP@R model** (amends I5 / §8)
+We are **not increasing seeds** for now. Instead of mean ± sem over ≥3 seeds, the
+reported number is the **median test mAP@R**, and the reported checkpoint is the
+**run at that median** (`analysis_utils.median_run`). *Reason:* median is robust to
+the run-to-run noise seen here without the cost of more seeds; §8's noise-floor/
+sem rules are superseded by a median comparison (`analysis_utils.h1_verdict`).
+
+### 10.5 Trimmed grid for the full run (amends §5), enabled by `--trimmed`
+Derived from the gate + dev findings:
+- **normalization** ∈ {per_graph, minibatch, none} — **drop `hybrid`** (worst).
+- **λg** ∈ {0.01, 0.1, 1} (3 pts, not 6) — the signal lives at small λg.
+- **order N** ∈ {3, 4, 8} — drop 16/17: the offline descriptor probe
+  (`RKD/analysis/descriptor_probe.py`) shows MDS spectra are **>90% near-degenerate
+  at N=16/17**, so MDS there is numerically fragile and not worth its cost.
+- **headline config** = `mds / regression / per_graph / N=4 / λg=0.01` (best in the
+  dev probe; to be reconfirmed by the `conv` convergence test).
+This cuts the full campaign from **477 → 213 jobs**. With `search_epochs=60`
+(§10.3): full ≈ 371 GPU-h vs **trimmed ≈ 196 GPU-h** (~$215 on Modal A10G;
+~20 h at Modal's 10-GPU cap; **~2.7 days on a single RTX 5070**, 2–3 jobs packed
+in 12 GB). Phase 5 (multi-seed headline, ~104 GPU-h) is unchanged and dominates —
+it is the essential result; the trim mostly shrinks the search phases 2–4.
+
+### 10.6 Cheap iteration phases (Modal, within free credits)
+- `dev`: descriptor × objective × normalization at small λg, short, reuses the
+  teacher (via `--only`) — design-space probe.
+- `conv`: floor + top-2 configs at a longer schedule — tests whether Graph-RKD's
+  edge **survives convergence** before committing the full local run.

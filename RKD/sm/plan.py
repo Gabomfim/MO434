@@ -59,8 +59,9 @@ DEFAULTS = dict(
     n_list=[3, 4, 8, 16, 17],                 # §1: sem N=2, sem N=1
     lambda_grid=[0.01, 0.1, 1.0, 10.0, 100.0, 1000.0],   # §3 fase 1
     seeds=3,                                   # I5
-    # orçamentos de época por fase
-    teacher_epochs=60, student_epochs=120, search_epochs=30, smoke_epochs=2,
+    # orçamentos de época por fase. search_epochs bumpado 30->60: os runs de 30 ep
+    # ficavam perto do piso (seleção de λg/norm/descritor pouco confiável).
+    teacher_epochs=60, student_epochs=120, search_epochs=60, smoke_epochs=2,
     batch=128, recall=[1, 2, 4, 8], select_metric="mapr", rel_warmup_frac=0.1,
     triplet_sample="distance", num_negatives=10, temperature=0.07,
     graph_rkd_sampling="log", graph_rkd_alpha=0.5, graph_rkd_gmax=64,

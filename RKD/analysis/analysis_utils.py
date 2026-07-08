@@ -43,15 +43,23 @@ def _student(cfg, tags):
     return "triplet_only"
 
 
+KNOWN_PHASES = ("teachers", "dev", "conv", "phase0", "phase1", "phase2",
+                "phase3", "phase4", "phase5")
+
+
 def _phase_of(name, tags):
-    """Fase da run: tag ``phaseN`` se houver; senão derivada do prefixo do nome
-    (runs antigas não têm a tag). smoke->phase0, floor/baseline gate->phase1."""
+    """Fase da run: tag de fase se houver (build_plan taga cada job); senão
+    derivada do prefixo do nome (runs antigas não têm tag). convfloor->conv,
+    smoke->phase0, floor->phase1, baseline gate->phase5."""
     for t in (tags or []):
-        if t.startswith("phase"):
+        if t in KNOWN_PHASES:
             return t
     n = name or ""
-    if n.startswith("phase"):
-        return n.split("-")[0]
+    if n.startswith("convfloor"):
+        return "conv"
+    for p in KNOWN_PHASES:
+        if n.startswith(p):                     # dev-, conv-, phase0-, ...
+            return p
     if n.startswith("smoke"):
         return "phase0"
     if n.startswith("floor"):
@@ -89,10 +97,22 @@ def fetch_runs(entity=ENTITY, project=PROJECT):
 
 
 def agg(df, group_cols, metric="test_mAP@R"):
-    """Média ± sem sobre seeds. Retorna colunas mean/sem/n."""
+    """Estatística por config sobre seeds. Primária = **mediana** (robusta, e o
+    projeto reporta o modelo da mediana — não estamos aumentando seeds); mean/sem
+    ficam só como referência. Retorna median/mean/sem/n."""
     g = df.dropna(subset=[metric]).groupby(group_cols)[metric]
-    out = g.agg(["mean", "sem", "count"]).reset_index()
+    out = g.agg(["median", "mean", "sem", "count"]).reset_index()
     return out.rename(columns={"count": "n"})
+
+
+def median_run(df, group_cols, metric="test_mAP@R"):
+    """Por config, a RUN cuja métrica é a mediana — o modelo/checkpoint a reportar."""
+    d = df.dropna(subset=[metric]).copy()
+    picks = []
+    for key, sub in d.groupby(group_cols):
+        sub = sub.sort_values(metric).reset_index(drop=True)
+        picks.append(sub.iloc[len(sub) // 2])       # mediana (seeds ímpares -> run real)
+    return pd.DataFrame(picks)
 
 
 # --------------------------------------------------------------------------- #
@@ -115,20 +135,21 @@ def headline_table(df, dataset, teacher, metric="test_mAP@R"):
     return t
 
 
-def h1_verdict(table, sem_slack=1.0):
-    """Regra do §8-H1: Graph-RKD 'iguala' se o intervalo cobre o melhor baseline;
-    'vence' só se média > melhor baseline + 1 sem. (Chama por célula.)"""
+def h1_verdict(table):
+    """Veredito H1 por MEDIANA (seeds não aumentados; reportamos o modelo da
+    mediana). Graph-RKD 'vence'/'iguala'/'perde' comparando a mediana da célula
+    contra a do melhor baseline. (Chama por célula dataset×teacher.)"""
     base = table[table.student != "+Graph-RKD"]
     g = table[table.student == "+Graph-RKD"]
     if base.empty or g.empty:
         return "sem dados suficientes"
-    best = base.loc[base["mean"].idxmax()]
-    gm, gs = float(g["mean"].iloc[0]), float(g["sem"].iloc[0])
-    if gm > best["mean"] + sem_slack * best["sem"]:
-        return f"Graph-RKD VENCE {best.student} ({gm:.4f} > {best['mean']:.4f}+sem)"
-    if gm + sem_slack * gs >= best["mean"]:
-        return f"Graph-RKD IGUALA {best.student} (dentro do noise floor)"
-    return f"Graph-RKD PERDE p/ {best.student} ({gm:.4f} < {best['mean']:.4f})"
+    best = base.loc[base["median"].idxmax()]
+    gm = float(g["median"].iloc[0])
+    if gm > best["median"]:
+        return f"Graph-RKD VENCE {best.student} (mediana {gm:.4f} > {best['median']:.4f})"
+    if abs(gm - best["median"]) < 1e-6:
+        return f"Graph-RKD IGUALA {best.student} (mediana {gm:.4f})"
+    return f"Graph-RKD PERDE p/ {best.student} (mediana {gm:.4f} < {best['median']:.4f})"
 
 
 def fig_h1_bar(df, metric="test_mAP@R", save=True):
@@ -140,7 +161,7 @@ def fig_h1_bar(df, metric="test_mAP@R", save=True):
     fig, axes = plt.subplots(1, len(cells), figsize=(4.2 * len(cells), 3.4), squeeze=False)
     for ax, (d, t) in zip(axes[0], cells):
         tab = headline_table(df, d, t, metric)
-        ax.bar(tab.student, tab["mean"], yerr=tab["sem"], capsize=3,
+        ax.bar(tab.student, tab["median"], yerr=tab["sem"], capsize=3,
                color=["#888"] * (len(tab) - 1) + ["#2b6cb0"])
         ax.set_title(f"{d} · {t}"); ax.set_ylabel(metric)
         ax.tick_params(axis="x", rotation=30)
@@ -163,7 +184,7 @@ def fig_h0_lambda(df, save=True):
     curve = agg(gg, ["lambda_g"], "val_mAP@R").sort_values("lambda_g")
     floor = g[g.student == "triplet_only"]["val_mAP@R"].dropna()
     fig, ax = plt.subplots(figsize=(5, 3.4))
-    ax.errorbar(curve.lambda_g, curve["mean"], yerr=curve["sem"], marker="o", capsize=3)
+    ax.errorbar(curve.lambda_g, curve["median"], yerr=curve["sem"], marker="o", capsize=3)
     ax.set_xscale("log"); ax.set_xlabel(r"$\lambda_g$"); ax.set_ylabel("val mAP@R")
     if len(floor):
         ax.axhline(floor.mean(), ls="--", color="k", label="triplet-only (floor)")
@@ -184,9 +205,9 @@ def fig_h2_norm(df, save=True):
     best = agg(g, ["norm"], "val_mAP@R")            # melhor λg embutido via max? usar mean
     # pega, por norm, a melhor média entre λg:
     per = agg(g, ["norm", "lambda_g"], "val_mAP@R")
-    best = per.loc[per.groupby("norm")["mean"].idxmax()]
+    best = per.loc[per.groupby("norm")["median"].idxmax()]
     fig, ax = plt.subplots(figsize=(5, 3.4))
-    ax.bar(best.norm, best["mean"], yerr=best["sem"], capsize=3, color="#2b6cb0")
+    ax.bar(best.norm, best["median"], yerr=best["sem"], capsize=3, color="#2b6cb0")
     ax.set_ylabel("val mAP@R (melhor λg)"); ax.set_title("H2: normalization ablation")
     fig.tight_layout()
     if save:
@@ -208,9 +229,9 @@ def fig_h4_overlay(df, save=True):
     widths = {}
     for obj, sub in g.groupby("objective"):
         c = agg(sub, ["lambda_g"], "val_mAP@R").sort_values("lambda_g")
-        ax.errorbar(c.lambda_g, c["mean"], yerr=c["sem"], marker="o", capsize=3, label=obj)
-        best = c["mean"].max(); sem_at_best = float(c.loc[c["mean"].idxmax(), "sem"])
-        within = c[c["mean"] >= best - sem_at_best]
+        ax.errorbar(c.lambda_g, c["median"], yerr=c["sem"], marker="o", capsize=3, label=obj)
+        best = c["median"].max()                    # largura: λg dentro de 10% do melhor
+        within = c[c["median"] >= 0.9 * best]
         widths[obj] = (within.lambda_g.min(), within.lambda_g.max())
     ax.set_xscale("log"); ax.set_xlabel(r"$\lambda_g$"); ax.set_ylabel("val mAP@R")
     ax.legend(); ax.set_title("H4: regression vs contrastive robustness")
