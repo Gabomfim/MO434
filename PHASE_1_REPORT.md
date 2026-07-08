@@ -37,3 +37,16 @@ Before committing to a large campaign, the method/config should be **evolved**
 (descriptor, objective, normalization, λg range, longer teacher/student) using
 cheap Modal tests, then the improved configuration run at full budget locally.
 See the "cheap Modal test" presets and the local full-GPU plan.
+
+## Dev iteration (Modal, cheap, reuses teacher) — design-space probe
+Slice cars196/r18/N4, λg=0.01, 30 ep, 1 seed. 14/16 configs; floor val=0.0232.
+**11/14 configs beat the floor.** Best: `mds/reg/per_graph` (val 0.0322, test 0.0080),
+`mds/reg/none` (0.0308/0.0074), `mds/con/per_graph` (0.0307/0.0072),
+`prof/reg/*` (~0.029/0.0075). **`hybrid` normalization is consistently worst** → drop it.
+
+**Candidates to carry to the LOCAL full run (multi-seed, longer schedule):**
+- objective: **regression** (more consistent than contrastive here)
+- descriptor: **profile and mds** (both viable at N=4)
+- normalization: **per_graph / minibatch / none** (NOT hybrid)
+- λg: small (~0.01–0.1); larger λg hurts (see gate curve above)
+Caveat: gains are small and single-seed/short — confirm with ≥3 seeds + full epochs locally.
