@@ -5,13 +5,19 @@ Layout no S3 (mesma região do treino; melhor acesso p/ SageMaker/Modal/etc.):
     s3://<bucket>/<prefix>/Cars196.tar
     s3://<bucket>/<prefix>/CUB_200_2011.tgz
 
-`ensure(...)` é idempotente: se o marcador do dataset já existe em ``data_dir``
-não faz nada; senão baixa o arquivo do S3 e extrai. Sem ``s3_prefix``, deixa o
-trainer tentar o download via torchvision (URLs upstream podem falhar)."""
+O prefixo S3 é PÚBLICO (read-only em graph-rkd/data/*), então o download usa
+HTTPS e **não precisa de credenciais AWS** — o colega roda de qualquer máquina.
+`ensure(...)` é idempotente e CACHEIA: se o marcador do dataset já existe em
+``data_dir`` não baixa nada (basta apontar sempre p/ o mesmo ``data_dir`` — ou,
+no Modal, um Volume persistente — p/ baixar uma única vez). Sem ``s3_prefix``,
+deixa o trainer tentar o download via torchvision."""
 
 import os
 import subprocess
 import tarfile
+import time
+import urllib.error
+import urllib.request
 
 ARCHIVE = {"cars196": "Cars196.tar", "cub200": "CUB_200_2011.tgz"}
 MARKER = {"cars196": os.path.join("Cars196", "cars_annos.mat"),
@@ -23,24 +29,58 @@ def has_dataset(data_dir, dataset):
     return os.path.exists(os.path.join(data_dir, MARKER[dataset]))
 
 
+def s3_to_https(s3_prefix):
+    """s3://bucket/key... -> https://bucket.s3.amazonaws.com/key... (acesso público)."""
+    rest = s3_prefix[len("s3://"):] if s3_prefix.startswith("s3://") else s3_prefix
+    bucket, _, key = rest.partition("/")
+    return f"https://{bucket}.s3.amazonaws.com/{key}".rstrip("/")
+
+
+def _download_https(url, dst, attempts=25):
+    """Baixa ``url`` -> ``dst`` com RESUME (Range) e retries/backoff. Sem creds."""
+    last = None
+    for i in range(1, attempts + 1):
+        have = os.path.getsize(dst) if os.path.exists(dst) else 0
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        if have:
+            req.add_header("Range", f"bytes={have}-")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                mode = "ab" if (have and r.status == 206) else "wb"
+                with open(dst, mode) as f:
+                    while True:
+                        chunk = r.read(1 << 20)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+            return
+        except (urllib.error.URLError, OSError) as e:  # noqa: PERF203
+            last = e
+            if i == attempts:
+                break
+            time.sleep(min(30, 3 * i))
+    raise RuntimeError(f"download HTTPS falhou ({url}): {last}")
+
+
 def _s3_cp(uri, dst, profile=None):
+    """Fallback com credenciais (se o bucket voltar a ser privado)."""
     env = dict(os.environ, AWS_MAX_ATTEMPTS="15", AWS_RETRY_MODE="standard")
     if profile:
         env["AWS_PROFILE"] = profile
-    subprocess.run(["aws", "s3", "cp", uri, dst, "--no-progress"],
-                   check=True, env=env)
+    subprocess.run(["aws", "s3", "cp", uri, dst, "--no-progress"], check=True, env=env)
 
 
 def ensure(data_dir, datasets, s3_prefix=DEFAULT_S3, profile=None,
            keep_archive=False):
-    """Garante Cars196/ e/ou CUB_200_2011/ extraídos em ``data_dir``.
-
-    Retorna a lista de datasets prontos. Levanta se um S3 cp/extração falhar.
-    """
+    """Garante Cars196/ e/ou CUB_200_2011/ EXTRAÍDOS em ``data_dir`` (cacheia:
+    pula o que já está lá). Baixa por HTTPS público; se falhar e houver creds,
+    tenta ``aws s3 cp``. Retorna a lista de datasets prontos."""
     os.makedirs(data_dir, exist_ok=True)
+    https_base = s3_to_https(s3_prefix) if s3_prefix else None
     ready = []
     for ds in datasets:
         if has_dataset(data_dir, ds):
+            print(f"[data] {ds}: já extraído em {data_dir} (cache hit)")
             ready.append(ds)
             continue
         if not s3_prefix:
@@ -48,9 +88,13 @@ def ensure(data_dir, datasets, s3_prefix=DEFAULT_S3, profile=None,
             continue
         arch = ARCHIVE[ds]
         local = os.path.join(data_dir, arch)
-        uri = f"{s3_prefix.rstrip('/')}/{arch}"
-        print(f"[data] {ds}: baixando {uri} -> {local}", flush=True)
-        _s3_cp(uri, local, profile)
+        url = f"{https_base}/{arch}"
+        print(f"[data] {ds}: baixando (público) {url} -> {local}", flush=True)
+        try:
+            _download_https(url, local)
+        except Exception as e:  # noqa: BLE001 - fallback com creds se privado
+            print(f"[data] {ds}: HTTPS falhou ({e}); tentando aws s3 cp")
+            _s3_cp(f"{s3_prefix.rstrip('/')}/{arch}", local, profile)
         print(f"[data] {ds}: extraindo {arch}", flush=True)
         with tarfile.open(local) as t:
             t.extractall(data_dir)

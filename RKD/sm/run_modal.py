@@ -35,12 +35,28 @@ image = (
 
 app = modal.App("graph-rkd")
 
+# Volume persistente = CACHE dos datasets extraídos, compartilhado entre TODOS os
+# containers. Baixamos/extraímos UMA vez (prepare_data) e os train_jobs só leem —
+# antes cada container re-baixava o Cars.tar (4 GB). Download público (sem creds).
+data_vol = modal.Volume.from_name("graph-rkd-data", create_if_missing=True)
+
+
+@app.function(image=image, volumes={"/data": data_vol}, timeout=2 * 3600)
+def prepare_data(datasets: list, data_s3: str):
+    """Popula o Volume /data (uma vez) com os datasets extraídos e commita."""
+    sys.path.insert(0, "/root/RKD/sm")
+    import data_prep
+    data_prep.ensure("/data", datasets, s3_prefix=data_s3)
+    data_vol.commit()                       # persiste p/ os demais containers
+    return sorted(datasets)
+
 
 @app.function(image=image, gpu=os.environ.get("GRAPH_RKD_GPU", "A10G"),
-              timeout=8 * 3600,
+              timeout=8 * 3600, volumes={"/data": data_vol},
               secrets=[modal.Secret.from_name("wandb"), modal.Secret.from_name("aws")])
 def train_job(spec: dict):
-    """Roda UM job (teacher/baseline/distill) num container GPU."""
+    """Roda UM job (teacher/baseline/distill) num container GPU. O dataset já
+    está no Volume /data (cache) — data_prep vê o marcador e não baixa nada."""
     sys.path.insert(0, "/root/RKD")
     sys.path.insert(0, "/root/RKD/sm")
     os.chdir("/root/RKD")
@@ -48,7 +64,7 @@ def train_job(spec: dict):
 
     ds = spec["params"].get("dataset")
     if ds:
-        data_prep.ensure("/data", [ds], s3_prefix=spec["data_s3"])  # creds via secret
+        data_prep.ensure("/data", [ds], s3_prefix=spec["data_s3"])  # cache hit no Volume
     params = dict(spec["params"])
     params["data"] = "/data"
     params["save_dir"] = f"/root/out/{spec['name']}"
@@ -66,12 +82,17 @@ def train_job(spec: dict):
 
 
 @app.function(image=image, timeout=24 * 3600)
-def driver(teachers: list, rest: list):
-    """Orquestra a campanha DENTRO do Modal (não no laptop): barreira dos teachers
-    e então o fan-out dos alunos. Rodar a orquestração server-side é o que torna a
-    campanha imune à conexão local — a versão anterior falhava porque o
-    ``local_entrypoint`` segurava o ``.map()`` dos teachers por ~40 min no laptop
-    e a rede caía antes do ``.map()`` dos alunos ('function is stopped')."""
+def driver(teachers: list, rest: list, data_s3: str):
+    """Orquestra a campanha DENTRO do Modal (não no laptop): cacheia os datasets
+    no Volume UMA vez, depois barreira dos teachers e fan-out dos alunos. Rodar a
+    orquestração server-side torna a campanha imune à conexão local (a versão
+    antiga falhava porque o ``local_entrypoint`` segurava o ``.map()`` por ~40 min
+    no laptop e a rede caía -> 'function is stopped')."""
+    datasets = sorted({s["params"]["dataset"] for s in (teachers + rest)
+                       if s["params"].get("dataset")})
+    if datasets:
+        print("preparando datasets no cache (Volume):", datasets)
+        prepare_data.remote(datasets, data_s3)     # download/extract único
     if teachers:
         tres = list(train_job.map(teachers, return_exceptions=True))
         failed = [str(r) for r in tres if isinstance(r, Exception)]

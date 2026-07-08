@@ -119,13 +119,10 @@ def make_estimator(cfg, spec, sm_session, run_tag):
         kwargs.update(use_spot_instances=True,
                       max_wait=max(cfg["max_run"], cfg["max_wait"]))
     est = PyTorch(**kwargs)
-    # canal de dados = APENAS o arquivo do dataset deste job (download enxuto);
-    # entry.py extrai. Se data_s3 apontar a uma árvore extraída, use-a direto.
-    inputs = None
-    if cfg["data_s3"]:
-        base = cfg["data_s3"].rstrip("/")
-        arch = ARCHIVE.get(spec["dataset"])
-        inputs = {"data": f"{base}/{arch}" if arch else cfg["data_s3"]}
+    # Sem canal de dados: entry.py usa data_prep (download público + cache em
+    # /opt/ml/checkpoints, unificado com local/Modal). Opcional: pré-montar uma
+    # árvore já extraída como canal 'data' (SM_CHANNEL_DATA) e o entry a reusa.
+    inputs = {"data": cfg["data_s3"]} if cfg["data_s3"] else None
     return est, inputs, _job_name(spec["name"], run_tag)
 
 

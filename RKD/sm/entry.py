@@ -15,62 +15,35 @@ W&B: precisa de ``WANDB_API_KEY`` no ambiente (o launcher repassa).
 """
 
 import argparse
-import glob
 import json
 import os
 import sys
-import tarfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))          # RKD/sm
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # RKD
+import data_prep  # noqa: E402  (mesma camada de cache do local/Modal)
 
 # nomes de checkpoint "last" por trainer (p/ resume)
 LAST_NAME = {"teacher": "last.pth", "baseline": "baseline_last.pth",
              "distill": "student_last.pth"}
 
-# marcadores que indicam dataset JÁ extraído sob um diretório de dados
-MARKERS = [os.path.join("Cars196", "cars_annos.mat"),
-           os.path.join("CUB_200_2011", "images.txt")]
-
-
-def _has_dataset(d):
-    return any(os.path.exists(os.path.join(d, m)) for m in MARKERS)
-
-
-def _extract_archives(src, dst):
-    """Extrai todos os .tar/.tgz/.tar.gz de ``src`` em ``dst`` (idempotente)."""
-    archives = (glob.glob(os.path.join(src, "*.tar")) +
-                glob.glob(os.path.join(src, "*.tgz")) +
-                glob.glob(os.path.join(src, "*.tar.gz")))
-    os.makedirs(dst, exist_ok=True)
-    for a in archives:
-        print(f"[entry] extraindo {a} -> {dst}", flush=True)
-        with tarfile.open(a) as t:
-            t.extractall(dst)
-    return archives
-
 
 def resolve_data_dir():
-    """Diretório com datasets EXTRAÍDOS (Cars196/, CUB_200_2011/).
+    """Dir de CACHE dos datasets (mesma camada `data_prep` do local/Modal).
 
-    Aceita o canal de input montado como (a) árvore já extraída, ou (b) ARQUIVOS
-    (Cars196.tar / CUB_200_2011.tgz) — o modo recomendado p/ S3/SageMaker e para
-    plataformas de GPU alugada, pois são poucos objetos grandes (download rápido).
-    No caso (b) extrai uma vez num dir gravável. Sem canal, cai p/ download via
-    torchvision (URLs upstream podem falhar; ver README)."""
-    channel = None
-    for env in ("SM_CHANNEL_DATA", "DATA_DIR"):
-        v = os.environ.get(env)
-        if v and os.path.isdir(v):
-            channel = v
-            break
-    if channel is None and os.path.isdir("/opt/ml/input/data/data"):
-        channel = "/opt/ml/input/data/data"
-
-    if channel and _has_dataset(channel):
-        return channel                              # (a) já extraído
-    if channel and _extract_archives(channel, "/opt/ml/data"):
-        return "/opt/ml/data"                       # (b) arquivos -> extrai
-    fallback = "/opt/ml/data"                       # (c) download em job
-    os.makedirs(fallback, exist_ok=True)
-    return fallback
+    Preferência: um canal de input já montado (``SM_CHANNEL_DATA`` — dados
+    pré-staged), senão ``/opt/ml/checkpoints`` (sincronizado com S3, sobrevive a
+    resume/spot => cache entre re-execuções do mesmo job), senão ``/opt/ml/data``.
+    O download em si é feito por ``data_prep.ensure`` (HTTPS público, sem creds)."""
+    ch = os.environ.get("SM_CHANNEL_DATA") or os.environ.get("DATA_DIR")
+    if ch and os.path.isdir(ch):
+        return ch
+    if os.path.isdir("/opt/ml/checkpoints"):
+        d = "/opt/ml/checkpoints/_data"
+        os.makedirs(d, exist_ok=True)
+        return d
+    os.makedirs("/opt/ml/data", exist_ok=True)
+    return "/opt/ml/data"
 
 
 def resolve_ckpt_dir():
@@ -105,7 +78,11 @@ def main(argv=None):
     save_dir = os.path.join(resolve_ckpt_dir(), spec.get("name", kind))
     params["save_dir"] = save_dir
     params["resume"] = os.path.join(save_dir, LAST_NAME[kind])
-    params["data"] = resolve_data_dir()
+    cache = resolve_data_dir()
+    ds = params.get("dataset")
+    if ds:                                          # baixa (público) + cacheia
+        data_prep.ensure(cache, [ds], s3_prefix=data_prep.DEFAULT_S3)
+    params["data"] = cache
     params.setdefault("wandb_mode", "online")
 
     print(f"[entry] kind={kind} name={spec.get('name')} "
