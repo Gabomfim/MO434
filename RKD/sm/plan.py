@@ -311,9 +311,25 @@ def phase_dev(cfg):
     return jobs
 
 
+def phase_conv(cfg):
+    """Teste de CONVERGÊNCIA barato no Modal: piso triplet-only + as 2 melhores
+    configs do dev, num schedule MAIS LONGO (student_epochs), p/ ver se o ganho do
+    Graph-RKD persiste quando o aluno de fato treina (gate/dev de 30 ep ficam perto
+    do piso). Reusa o teacher (rode com `--only conv`)."""
+    ds, arch = cfg["gate_dataset"], cfg["gate_teacher"]
+    e = cfg["student_epochs"]
+    lam = 0.01
+    jobs = [_baseline_spec(cfg, ds, e, 0, "conv", tag="convfloor")]
+    for method, norm in [("mds", "per_graph"), ("profile", "minibatch")]:
+        jobs.append(_graph_spec(cfg, ds, arch, method, "regression", norm,
+                                cfg["gate_nodes"], lam, e, 0, "conv"))
+    return jobs
+
+
 PHASES = {
     "teachers": phase_teachers,
     "dev": phase_dev,
+    "conv": phase_conv,
     "phase0": phase0_smoke,
     "phase1": phase1_lambda_gate,
     "phase2": phase2_norm,

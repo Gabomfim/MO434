@@ -91,15 +91,22 @@ def main(phases: str = "teachers phase0 phase1",
          wandb_entity: str = "gabomfim-unicamp",
          wandb_project: str = "graph-rkd",
          data_s3: str = "s3://graph-rkd-832271495954/graph-rkd/data",
-         only: str = ""):
+         only: str = "", student_epochs: int = 0, search_epochs: int = 0):
     """``only`` = filtro (substrings separadas por vírgula) sobre os NOMES dos jobs,
     p/ (re)rodar um subconjunto — ex.: --only lg100-s0 roda só aquele ponto de λg.
-    Se o filtro excluir os teachers, eles são pulados (usa-se o artefato W&B)."""
+    Se o filtro excluir os teachers, eles são pulados (usa-se o artefato W&B).
+    ``student_epochs``/``search_epochs`` (>0) sobrescrevem o orçamento de época
+    (controle de custo/convergência)."""
     sys.path.insert(0, os.path.join(RKD_DIR, "sm"))
     import plan
     import launch
 
-    cfg = plan.merged_config(wandb_entity=wandb_entity, wandb_project=wandb_project)
+    ov = dict(wandb_entity=wandb_entity, wandb_project=wandb_project)
+    if student_epochs:
+        ov["student_epochs"] = student_epochs
+    if search_epochs:
+        ov["search_epochs"] = search_epochs
+    cfg = plan.merged_config(**ov)
     jobs = plan.build_plan(cfg, phases.split())
     specs = []
     for s in jobs:
