@@ -293,8 +293,27 @@ def phase5_headline(cfg):
     return jobs
 
 
+def phase_dev(cfg):
+    """Grade BARATA p/ ITERAR o método no Modal dentro dos créditos grátis (reusa
+    o teacher já treinado via artefato W&B — rode com `--only dev-` p/ pular o
+    teacher). Compara descritor × objetivo × normalização num λg pequeno, schedule
+    curto, 1 seed, na fatia cars196/r18/N4. ~12 jobs. Serve p/ decidir a config
+    promissora ANTES do run completo local. Ajuste os eixos via os overrides do cfg."""
+    ds, arch = cfg["gate_dataset"], cfg["gate_teacher"]
+    e = cfg["search_epochs"]
+    lam = cfg["lambda_grid"][0] if cfg["lambda_grid"] else 0.1
+    jobs = []
+    for method in cfg["methods"]:                 # profile, mds
+        for obj in cfg["objectives"]:             # regression, contrastive
+            for norm in cfg["norms"]:             # default: os 4 esquemas
+                jobs.append(_graph_spec(cfg, ds, arch, method, obj, norm,
+                                        cfg["gate_nodes"], lam, e, 0, "dev"))
+    return jobs
+
+
 PHASES = {
     "teachers": phase_teachers,
+    "dev": phase_dev,
     "phase0": phase0_smoke,
     "phase1": phase1_lambda_gate,
     "phase2": phase2_norm,
@@ -311,6 +330,8 @@ def build_plan(cfg, phases):
 
     def add(spec):
         if spec["name"] not in seen:
+            if spec["phase"] not in spec["wandb"]["tags"]:   # tag p/ análise por fase
+                spec["wandb"]["tags"] = list(spec["wandb"]["tags"]) + [spec["phase"]]
             seen.add(spec["name"])
             jobs.append(spec)
 

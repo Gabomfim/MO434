@@ -90,7 +90,11 @@ def driver(teachers: list, rest: list):
 def main(phases: str = "teachers phase0 phase1",
          wandb_entity: str = "gabomfim-unicamp",
          wandb_project: str = "graph-rkd",
-         data_s3: str = "s3://graph-rkd-832271495954/graph-rkd/data"):
+         data_s3: str = "s3://graph-rkd-832271495954/graph-rkd/data",
+         only: str = ""):
+    """``only`` = filtro (substrings separadas por vírgula) sobre os NOMES dos jobs,
+    p/ (re)rodar um subconjunto — ex.: --only lg100-s0 roda só aquele ponto de λg.
+    Se o filtro excluir os teachers, eles são pulados (usa-se o artefato W&B)."""
     sys.path.insert(0, os.path.join(RKD_DIR, "sm"))
     import plan
     import launch
@@ -103,6 +107,11 @@ def main(phases: str = "teachers phase0 phase1",
         payload["dataset"] = s["dataset"]
         payload["data_s3"] = data_s3
         specs.append(payload)
+
+    if only:
+        subs = [x.strip() for x in only.split(",") if x.strip()]
+        specs = [s for s in specs if any(x in s["name"] for x in subs)]
+        print("filtro --only ->", [s["name"] for s in specs])
 
     teachers = [s for s in specs if s["kind"] == "teacher"]
     rest = [s for s in specs if s["kind"] != "teacher"]

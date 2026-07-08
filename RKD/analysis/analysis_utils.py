@@ -43,6 +43,24 @@ def _student(cfg, tags):
     return "triplet_only"
 
 
+def _phase_of(name, tags):
+    """Fase da run: tag ``phaseN`` se houver; senão derivada do prefixo do nome
+    (runs antigas não têm a tag). smoke->phase0, floor/baseline gate->phase1."""
+    for t in (tags or []):
+        if t.startswith("phase"):
+            return t
+    n = name or ""
+    if n.startswith("phase"):
+        return n.split("-")[0]
+    if n.startswith("smoke"):
+        return "phase0"
+    if n.startswith("floor"):
+        return "phase1"
+    if n.startswith("baseline"):
+        return "phase5"
+    return ""
+
+
 def fetch_runs(entity=ENTITY, project=PROJECT):
     """DataFrame: uma linha por run W&B (config + summary achatados + classificação)."""
     import wandb
@@ -53,8 +71,7 @@ def fetch_runs(entity=ENTITY, project=PROJECT):
         s = dict(r.summary)
         row = {
             "run": r.name, "id": r.id, "state": r.state,
-            "group": r.group, "phase": next((t for t in (r.tags or [])
-                                             if t.startswith("phase")), ""),
+            "group": r.group, "phase": _phase_of(r.name, r.tags),
             "student": _student(cfg, r.tags),
             "dataset": cfg.get("dataset"), "teacher": cfg.get("teacher_arch"),
             "seed": cfg.get("seed"),
