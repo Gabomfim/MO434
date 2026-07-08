@@ -82,8 +82,10 @@ uv sync                                   # includes modal
 modal setup
 modal secret create wandb WANDB_API_KEY=...
 modal secret create aws AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_DEFAULT_REGION=us-east-1
-modal run RKD/sm/run_modal.py --phases "teachers phase0 phase1"
+modal run --detach RKD/sm/run_modal.py --phases "phase0 phase1"
 ```
+`--detach` keeps the run alive on Modal even if your local connection drops
+(recommended — an interrupted `modal run` otherwise stops the app mid-campaign).
 
 ### Option B — AWS SageMaker (parallel cloud jobs)
 Needs g5 quota approved + an execution role. Dry-run unless `LAUNCH=1`.

@@ -9,8 +9,8 @@ Pré-requisitos (uma vez):
         AWS_DEFAULT_REGION=us-east-1
 
 Uso:
-    modal run sm/run_modal.py --phases "teachers phase0 phase1"
-    modal run sm/run_modal.py --phases "phase5" --gpu A10G
+    modal run --detach sm/run_modal.py --phases "teachers phase0 phase1"
+    modal run --detach sm/run_modal.py --phases "phase5" --gpu A10G
 
 Paralelismo: `train_job.map(...)` sobe um container GPU por job e autoescala. Os
 teachers rodam primeiro (barreira); os alunos puxam o teacher pelo artefato W&B
