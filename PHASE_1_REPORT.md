@@ -13,7 +13,7 @@
 | Graph-RKD λg=0.1 | 0.0170 | 0.0052 |
 | Graph-RKD λg=1 | 0.0112 | 0.0023 |
 | Graph-RKD λg=10 | 0.0086 | 0.0016 |
-| Graph-RKD λg=100 | *(re-running — 1st attempt failed)* | |
+| Graph-RKD λg=100 | 0.0094 | (below floor) |
 | Graph-RKD λg=1000 | 0.0081 | 0.0015 |
 | teacher (reference) | — | 0.188 |
 
