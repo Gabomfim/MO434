@@ -1,8 +1,8 @@
 # Playbook de prompts (PT) — rodar os experimentos Graph-RKD na GPU
 
-Guia para o **colega** rodar a campanha na máquina com GPU usando o **Claude Code
+Guia para o **Rodrigo** rodar a campanha na máquina com GPU usando o **Claude Code
 dele**. Cole **um prompt por vez** na sessão do Claude, siga as **bifurcações
-(➤ SE … ENTÃO …)** conforme o que aparecer. O colega **só roda** os experimentos e
+(➤ SE … ENTÃO …)** conforme o que aparecer. O Rodrigo **só roda** os experimentos e
 **manda relatórios pro Gabriel**; a **análise/gráficos/paper o Gabriel faz depois**,
 na máquina dele.
 
