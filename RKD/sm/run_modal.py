@@ -65,6 +65,27 @@ def train_job(spec: dict):
     return spec["name"]
 
 
+@app.function(image=image, timeout=24 * 3600)
+def driver(teachers: list, rest: list):
+    """Orquestra a campanha DENTRO do Modal (não no laptop): barreira dos teachers
+    e então o fan-out dos alunos. Rodar a orquestração server-side é o que torna a
+    campanha imune à conexão local — a versão anterior falhava porque o
+    ``local_entrypoint`` segurava o ``.map()`` dos teachers por ~40 min no laptop
+    e a rede caía antes do ``.map()`` dos alunos ('function is stopped')."""
+    if teachers:
+        tres = list(train_job.map(teachers, return_exceptions=True))
+        failed = [str(r) for r in tres if isinstance(r, Exception)]
+        if failed:
+            print("teacher(s) FALHARAM, abortando alunos:", failed)
+            return {"teacher_failed": failed}
+        print("teachers ok:", [r for r in tres if not isinstance(r, Exception)])
+    sres = list(train_job.map(rest, return_exceptions=True))
+    ok = [r for r in sres if not isinstance(r, Exception)]
+    bad = [str(r) for r in sres if isinstance(r, Exception)]
+    print(f"alunos: {len(ok)} ok, {len(bad)} falhas", ("| falhas: " + str(bad)) if bad else "")
+    return {"ok": ok, "failed": bad}
+
+
 @app.local_entrypoint()
 def main(phases: str = "teachers phase0 phase1",
          wandb_entity: str = "gabomfim-unicamp",
@@ -85,11 +106,10 @@ def main(phases: str = "teachers phase0 phase1",
 
     teachers = [s for s in specs if s["kind"] == "teacher"]
     rest = [s for s in specs if s["kind"] != "teacher"]
-    print(f"Modal: {len(teachers)} teachers -> depois {len(rest)} alunos "
+    # Spawn (fire-and-forget) do driver: TODA a orquestração + treino roda no Modal.
+    # Com `modal run --detach`, o app segue vivo mesmo que o laptop desconecte.
+    call = driver.spawn(teachers, rest)
+    print(f"Modal: {len(teachers)} teachers -> {len(rest)} alunos "
           f"| W&B {wandb_entity}/{wandb_project}")
-    if teachers:
-        for name in train_job.map(teachers):             # barreira: espera teachers
-            print("teacher ok:", name)
-    for name in train_job.map(rest):                     # alunos em paralelo
-        print("done:", name)
-    print("campanha Modal concluída.")
+    print(f"driver spawned (call id: {call.object_id}); rode com `modal run --detach`. "
+          "Acompanhe em modal.com/apps e no W&B.")
