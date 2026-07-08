@@ -143,7 +143,7 @@ Vi possível colapso (loss NaN/inf ou mAP@R de teste ~0 em vários runs). NÃO a
 método nem os hiperparâmetros por conta própria. Faça:
 1. Confirme: liste os runs afetados (nome, fase, config, mAP@R val/test) do W&B.
 2. Verifique se é geral (todos) ou de uma config específica (ex.: uma normalização
-   ou λg). Colcapso só em λg alto/uma norm pode ser esperado.
+   ou λg). Colapso só em λg alto/uma norm pode ser esperado.
 3. Deixe os demais jobs saudáveis continuarem.
 4. Gere um "RELATÓRIO DE COLAPSO" pro Gabriel: quais configs colapsaram, quais estão
    bem, e sua hipótese — e PARE de tomar ação corretiva de método até o Gabriel
