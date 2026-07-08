@@ -50,3 +50,18 @@ Slice cars196/r18/N4, λg=0.01, 30 ep, 1 seed. 14/16 configs; floor val=0.0232.
 - normalization: **per_graph / minibatch / none** (NOT hybrid)
 - λg: small (~0.01–0.1); larger λg hurts (see gate curve above)
 Caveat: gains are small and single-seed/short — confirm with ≥3 seeds + full epochs locally.
+
+## Convergence test (conv) — go/no-go for the full run
+Floor + top-2 dev configs at **80 epochs** (Cars-196/R18/N4/λg=0.01, 1 seed, reuse teacher):
+
+| config | val mAP@R | test mAP@R |
+|---|---|---|
+| triplet-only floor | 0.0942 | 0.0214 |
+| mds / reg / per_graph | 0.1025 | 0.0252 (+18% rel) |
+| prof / reg / minibatch | 0.1107 | 0.0243 (+14% rel) |
+
+**PASS.** Longer training lifts everyone far off the near-floor 30-ep regime
+(floor test 0.007→0.021), and **both Graph-RKD configs beat the triplet-only floor**
+by ~14–18% (test). The edge survives/grows at convergence → the trimmed campaign
+is worth running (confirm multi-seed in phase 5). Single-seed, so treat as a strong
+signal, not a final number.
