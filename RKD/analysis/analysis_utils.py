@@ -75,6 +75,11 @@ def fetch_runs(entity=ENTITY, project=PROJECT):
     api = wandb.Api()
     rows = []
     for r in api.runs(f"{entity}/{project}"):
+        # so runs CONCLUIDAS entram na analise. runs 'crashed'/'failed'/'killed'
+        # ou ainda 'running' (campanha em curso) tem summary parcial/ausente e
+        # entrariam com metrica lixo -> excluir. Ver GUIA_ANALISE.md.
+        if r.state != "finished":
+            continue
         cfg = {k: v for k, v in r.config.items() if not k.startswith("_")}
         s = dict(r.summary)
         row = {
