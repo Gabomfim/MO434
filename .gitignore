@@ -298,3 +298,8 @@ RKD/plan.json
 
 # Tabelas geradas pela análise (deriváveis do results.csv)
 RKD/analysis/tables/
+
+# W&B artifact downloads (checkpoints pulled by 05_qualitative_retrieval)
+artifacts/
+RKD/analysis/artifacts/
+wandb/
