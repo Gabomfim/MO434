@@ -21,6 +21,7 @@ ENTITY = "gabomfim-unicamp"
 PROJECT = "graph-rkd"
 METRICS = ["mAP@R", "R_precision", "recall@1", "recall@2", "recall@4", "recall@8"]
 FIGDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
+TABDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tables")
 
 
 # --------------------------------------------------------------------------- #
@@ -286,3 +287,72 @@ def n3_vs_rkda(df, metric="test_mAP@R", phase="phase5"):
     a = agg(g3, ["dataset", "teacher", "method"], metric)
     b = agg(rkda, ["dataset", "teacher"], metric); b["method"] = "RKD-A"
     return pd.concat([a, b], ignore_index=True).sort_values(["dataset", "teacher", "method"])
+
+
+# --------------------------------------------------------------------------- #
+# Export de tabelas p/ o paper (CSV + LaTeX booktabs) → tables/                #
+# --------------------------------------------------------------------------- #
+def save_table(df, name, caption="", label=""):
+    """Salva `df` como tables/<name>.csv e tables/<name>.tex (booktabs)."""
+    os.makedirs(TABDIR, exist_ok=True)
+    df.to_csv(os.path.join(TABDIR, name + ".csv"), index=False)
+    body = df.to_latex(index=False, float_format="%.4f")
+    tex = "\\begin{table}[h]\n\\centering\n\\small\n"
+    if caption:
+        tex += f"\\caption{{{caption}}}\n"
+    if label:
+        tex += f"\\label{{{label}}}\n"
+    tex += body + "\\end{table}\n"
+    with open(os.path.join(TABDIR, name + ".tex"), "w", encoding="utf-8") as f:
+        f.write(tex)
+    return name
+
+
+def export_tables(df):
+    """Gera as tabelas canônicas do paper (H1/H2/H3/H4/H5) em tables/*.{csv,tex}.
+    Pula a tabela cuja fase ainda não tem dados. Retorna a lista de arquivos."""
+    written = []
+    # H1 — headline por célula (dataset, teacher): 5 alunos × mAP@R/R-Prec/R@1 (mediana)
+    cells = df[df.phase == "phase5"][["dataset", "teacher"]].dropna().drop_duplicates()
+    for d, t in cells.itertuples(index=False):
+        tab = headline_table(df, d, t, "test_mAP@R")[["student", "median", "n"]]
+        tab = tab.rename(columns={"median": "mAP@R"})
+        for m, col in [("test_R_precision", "R-Prec"), ("test_recall@1", "R@1")]:
+            mm = headline_table(df, d, t, m)[["student", "median"]].rename(columns={"median": col})
+            tab = tab.merge(mm, on="student", how="left")
+        written.append(save_table(tab, f"headline_{d}_{t}",
+                                  f"Headline (H1) --- {d}, {t}: median test metrics.",
+                                  f"tab:headline-{d}-{t}"))
+    # H2 — normalização (phase2): melhor λg por (norm, N)
+    g2 = df[(df.phase == "phase2") & (df.student == "graph-rkd")]
+    if len(g2):
+        per = agg(g2, ["norm", "N", "lambda_g"], "test_mAP@R")
+        best = per.loc[per.groupby(["norm", "N"])["median"].idxmax()]
+        written.append(save_table(best[["norm", "N", "lambda_g", "median", "n"]]
+                                  .rename(columns={"median": "mAP@R"}), "h2_normalization",
+                                  "Normalization ablation (H2): best-$\\lambda_g$ median test mAP@R.",
+                                  "tab:h2"))
+    # H3 — descritor (phase3): profile vs mds por (dataset, teacher, N)
+    g3 = df[(df.phase == "phase3") & (df.student == "graph-rkd")]
+    if len(g3):
+        t3 = agg(g3, ["dataset", "teacher", "method", "N"], "test_mAP@R")
+        written.append(save_table(t3[["dataset", "teacher", "method", "N", "median", "n"]]
+                                  .rename(columns={"median": "mAP@R"}), "h3_descriptor",
+                                  "Descriptor characterization (H3): median test mAP@R.",
+                                  "tab:h3"))
+    # H4 — objetivo (phase4): regression vs contrastive por λg
+    g4 = df[(df.phase == "phase4") & (df.student == "graph-rkd")]
+    if len(g4):
+        t4 = agg(g4, ["objective", "lambda_g"], "test_mAP@R")
+        written.append(save_table(t4[["objective", "lambda_g", "median", "n"]]
+                                  .rename(columns={"median": "mAP@R"}), "h4_objective",
+                                  "Objective robustness (H4): median test mAP@R vs $\\lambda_g$.",
+                                  "tab:h4"))
+    # H5 — N=3 vs RKD-A (phase5)
+    t5 = n3_vs_rkda(df, "test_mAP@R")
+    if len(t5):
+        written.append(save_table(t5[["dataset", "teacher", "method", "median", "n"]]
+                                  .rename(columns={"median": "mAP@R"}), "h5_n3_vs_rkda",
+                                  "N=3 vs RKD-A (H5): median test mAP@R per cell.", "tab:h5"))
+    print(f"[tables] {len(written)} tabelas -> {TABDIR}: {written}")
+    return written

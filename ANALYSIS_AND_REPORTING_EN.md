@@ -235,6 +235,12 @@ verdict + evidence into the corresponding paper section (§ noted).
 
 ## 3. Tables to produce (canonical list)
 
+**Implemented:** `analysis_utils.export_tables(df)` (run automatically by notebook
+`06_findings`) writes the H1/H2/H3/H4/H5 tables to `RKD/analysis/tables/*.{csv,tex}`
+(booktabs, with `\caption`/`\label`), ready to `\input{}`/paste into `paper.tex`.
+Figures are saved by the `fig_*` functions to `figures/*.pdf`. `tables/` is gitignored
+(derived from `results.csv`) — re-run `06` as more seeds finish.
+
 Emit each as (a) a CSV under `results/tables/` and (b) a LaTeX `table` (booktabs)
 ready to paste into `paper.tex`. Always report median and min–max range (state n). Bold the best in each
 column *only when its range is entirely above all others* (§0 rule); otherwise bold nothing and note the tie.

@@ -119,6 +119,11 @@ Rode **nesta ordem**. Tempo total < 1 min (fora o `00`, que depende da rede do W
 ### `06_findings.ipynb` — §8
 - Consolida os **vereditos H0–H5** que alimentam a Seção 8 (FINDINGS). Usa a sonda
   (disponível já) + as tabelas dos notebooks anteriores.
+- **Exporta as tabelas do paper:** roda `au.export_tables(df)` → grava
+  `tables/*.{csv,tex}` (booktabs, com `\caption`/`\label`) para H1 (headline por
+  célula), H2, H3, H4 e H5 — prontas pra `\input{}`/colar no `paper.tex`. As figuras
+  já são salvas pelos `fig_*` em `figures/*.pdf`. (`tables/` é gitignored — deriva do
+  `results.csv`; re-rode o `06` quando fechar mais seeds.)
 
 ---
 

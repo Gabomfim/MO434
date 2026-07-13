@@ -295,3 +295,6 @@ RKD/plan.json
 # Arquivos de dataset (baixados/estagiados; ficam no S3, nunca no repo)
 *.tar
 *.tgz
+
+# Tabelas geradas pela análise (deriváveis do results.csv)
+RKD/analysis/tables/
