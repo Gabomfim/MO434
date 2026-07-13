@@ -6,8 +6,7 @@ Escrito para o Gabriel conseguir rodar as análises sozinho a qualquer momento.
 
 > **TL;DR** (ambiente já configurado, na raiz do repo):
 > ```bash
-> cd /mnt/b/_ai/mo434/Gabriel/RKD/analysis
-> export WANDB_API_KEY=$(awk '/machine api.wandb.ai/{m=1} m&&/password/{print $2;exit}' ~/.netrc)
+> cd RKD/analysis   # a WANDB_API_KEY é lida do .env automaticamente (ver Seção 2)
 > uv run --no-sync jupyter nbconvert --to notebook --execute --inplace \
 >     00_aggregate_results.ipynb 01_quantitative_H1.ipynb \
 >     02_order_normalization_H0_H2.ipynb 03_descriptor_objective_H3_H4.ipynb \
@@ -51,20 +50,22 @@ metodologia, muda-se ali num lugar só.
 
 - Ambiente já pronto no repo: venv `.venv`, gerido por `uv`. Rode sempre com
   `uv run --no-sync python ...` (o `--no-sync` evita reinstalar deps).
-- **Credencial W&B** (necessária só para o notebook `00`): exporte a chave antes
-  de abrir o Jupyter/rodar o `00`:
+- **Credencial W&B** (necessária só para o notebook `00`): fica num arquivo **`.env`**
+  na raiz do repo — o `analysis_utils` o carrega automaticamente (procura em
+  `RKD/analysis/`, `RKD/` e na raiz), então **não precisa de `export` manual**. Crie
+  a partir do template:
   ```bash
-  export WANDB_API_KEY=$(awk '/machine api.wandb.ai/{m=1} m&&/password/{print $2;exit}' ~/.netrc)
+  cp .env.example .env   # e preencha WANDB_API_KEY (de https://wandb.ai/authorize)
   ```
-  (a chave já está gravada no `~/.netrc` da máquina do Rodrigo). Entidade/projeto
-  default: `gabomfim-unicamp/graph-rkd` — definidos no topo do `analysis_utils.py`.
+  O `.env` é **gitignored** (nunca commitar). Chaves: `WANDB_API_KEY`, e opcionalmente
+  `WANDB_ENTITY`/`WANDB_PROJECT` (default `gabomfim-unicamp/graph-rkd`, no topo do
+  `analysis_utils.py`).
 - Dependências de análise: `pandas`, `matplotlib`, `wandb` (já no venv). O `wandb`
   é importado sob demanda, só dentro do `fetch_runs`.
 
 Para trabalhar interativamente, em vez do `nbconvert`:
 ```bash
-cd /mnt/b/_ai/mo434/Gabriel/RKD/analysis
-export WANDB_API_KEY=$(awk '/machine api.wandb.ai/{m=1} m&&/password/{print $2;exit}' ~/.netrc)
+cd RKD/analysis                   # WANDB_API_KEY lida do .env (Seção 2)
 uv run --no-sync jupyter lab      # abre o Jupyter; rode os notebooks na ordem
 ```
 
@@ -202,7 +203,7 @@ Se o W&B estiver fora do ar ou você quiser um número rápido só do headline *
 partir dos logs locais** (`experiments_local/`), há um extrator independente:
 
 ```bash
-cd /mnt/b/_ai/mo434/Gabriel
+cd <raiz-do-repo>
 uv run --no-sync python analysis/extract_headline.py
 # gera analysis/headline_partial.csv (resumo test mAP@R por célula×método×seed)
 #   e analysis/headline_raw_metrics.csv (mAP@R, R-prec, recall@1/2/4/8)

@@ -17,6 +17,29 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 
+
+def _load_dotenv():
+    """Carrega variáveis de um `.env` (WANDB_API_KEY etc.) sem depender de pacote.
+    Procura em RKD/analysis/, RKD/ e na raiz do repo; NÃO sobrescreve variáveis já
+    definidas no ambiente. Rodado no import — assim o `00` acha a chave do W&B sem
+    `export` manual."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for d in (here, os.path.dirname(here), os.path.dirname(os.path.dirname(here))):
+        path = os.path.join(d, ".env")
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        break
+
+
+_load_dotenv()
+
 ENTITY = "gabomfim-unicamp"
 PROJECT = "graph-rkd"
 METRICS = ["mAP@R", "R_precision", "recall@1", "recall@2", "recall@4", "recall@8"]
