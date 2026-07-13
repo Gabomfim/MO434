@@ -274,10 +274,15 @@ def fig_probe(save=True):
 # --------------------------------------------------------------------------- #
 # §7.4 — H5: N=3 vs RKD-A                                                       #
 # --------------------------------------------------------------------------- #
-def n3_vs_rkda(df, metric="test_mAP@R"):
-    """Tabela N=3 (profile e mds) vs RKD-A por (dataset, teacher)."""
-    g3 = df[(df.student == "graph-rkd") & (df.N == 3)]
-    rkda = df[df.student == "rkd_angle"]
+def n3_vs_rkda(df, metric="test_mAP@R", phase="phase5"):
+    """Tabela N=3 (profile e mds) vs RKD-A por (dataset, teacher).
+
+    Restrito ao HEADLINE (``phase='phase5'``) por padrão: a comparação matched-arity
+    tem que usar as MESMAS condições do RKD-A (que só roda no phase5). Sem o filtro,
+    os N=3 de busca (phase2/3, outras norm/λg) entrariam e enviesariam o veredito."""
+    sub = df[df.phase == phase] if phase else df
+    g3 = sub[(sub.student == "graph-rkd") & (sub.N == 3)]
+    rkda = sub[sub.student == "rkd_angle"]
     a = agg(g3, ["dataset", "teacher", "method"], metric)
     b = agg(rkda, ["dataset", "teacher"], metric); b["method"] = "RKD-A"
     return pd.concat([a, b], ignore_index=True).sort_values(["dataset", "teacher", "method"])
