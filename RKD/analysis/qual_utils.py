@@ -95,14 +95,19 @@ def load_student(ckpt):
 # --------------------------------------------------------------------------- #
 # dados + embeddings + figura                                                  #
 # --------------------------------------------------------------------------- #
-def test_loader(dataset):
-    """Test split do dataset (puxa do S3 e cacheia se preciso)."""
+def test_loader(dataset, workers=0):
+    """Test split do dataset (puxa do S3 e cacheia se preciso).
+
+    workers=0 por padrão: só fazemos embedding (inferência), então DataLoader
+    workers não ajudam e evitam o "bus error / insufficient shared memory (shm)"
+    comum em WSL/Docker, onde /dev/shm é pequeno. Aumente se sua máquina tiver
+    shm suficiente e você quiser I/O em paralelo."""
     data_prep.ensure(DATA_DIR, [dataset], progress=True)
     cls, _ = DATASETS[dataset]
     tf = T.Compose([T.Resize((256, 256)), T.CenterCrop(224), T.ToTensor(),
                     T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
-    loaders, info = build_metric_loaders(cls, DATA_DIR, tf, tf, 128, 5, 100, 4,
-                                         0.2, 0, False)
+    loaders, info = build_metric_loaders(cls, DATA_DIR, tf, tf, 128, 5, 100,
+                                         workers, 0.2, 0, False)
     print(f"[{dataset}] test: {info}")
     return loaders["test"]
 
