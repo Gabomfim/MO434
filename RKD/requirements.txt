@@ -1,5 +1,5 @@
-# Dependências EXTRAS instaladas pelo container PyTorch do SageMaker (DLC já traz
-# torch/torchvision). Auto-instalado quando presente na raiz do source_dir.
+# EXTRA dependencies installed by the SageMaker PyTorch container (the DLC already brings
+# torch/torchvision). Auto-installed when present at the root of source_dir.
 wandb==0.27.0
 kagglehub>=1.0.1
 scipy>=1.15

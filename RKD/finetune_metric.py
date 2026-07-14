@@ -1,9 +1,9 @@
-"""Fine-tune de um teacher de METRIC LEARNING (embedding) em Cars/CUB.
+"""Fine-tune a METRIC LEARNING teacher (embedding) on Cars/CUB.
 
-Treina resnet18/convnext_tiny (ImageNet) como rede de EMBEDDING com triplet loss
-no split disjunto (*Metric), avaliando por recall@K. Seleção pelo melhor
-recall@1 de VALIDAÇÃO (classes de treino separadas). O checkpoint vira o teacher
-das destilações métricas (carregado por teacher_models.load_teacher, strict=False).
+Trains resnet18/convnext_tiny (ImageNet) as an EMBEDDING network with triplet loss
+on the disjoint split (*Metric), evaluating by recall@K. Selection by the best
+VALIDATION recall@1 (held-out training classes). The checkpoint becomes the teacher
+of the metric distillations (loaded by teacher_models.load_teacher, strict=False).
 """
 
 import argparse
@@ -36,9 +36,9 @@ def build_parser():
     p.add_argument("--data", default="data")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--val_class_frac", type=float, default=0.2,
-                   help="fração de CLASSES de treino separadas como validação")
+                   help="fraction of training CLASSES held out as validation")
 
-    # triplet / otimização
+    # triplet / optimization
     p.add_argument("--triplet_margin", type=float, default=0.2)
     p.add_argument("--triplet_sample", choices=sorted(SAMPLERS), default="distance")
     p.add_argument("--l2normalize", choices=["true", "false"], default="true")
@@ -52,7 +52,7 @@ def build_parser():
     p.add_argument("--iter_per_epoch", type=int, default=100)
     p.add_argument("--recall", type=int, nargs="+", default=RECALL_K)
     p.add_argument("--select_metric", choices=sorted(SELECT_METRICS), default="mapr",
-                   help="métrica de validação p/ seleção (mapr=mAP@R, recomendado)")
+                   help="validation metric for selection (mapr=mAP@R, recommended)")
     p.add_argument("--eval_every", type=int, default=5)
 
     p.add_argument("--amp", action="store_true")
@@ -200,7 +200,7 @@ def run_experiment(opts):
                         "best_val": best_val, "best_state": best_state}, last_path)
             is_final = epoch == opts.epochs
             if improved or is_final:
-                # salva best separado (carregado depois como teacher)
+                # saves best separately (loaded later as teacher)
                 if improved:
                     torch.save({"model": best_state}, os.path.join(opts.save_dir, "best.pth"))
                 aliases = (["best"] if improved else []) + (["last"] if is_final else [])

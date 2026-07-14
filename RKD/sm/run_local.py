@@ -1,25 +1,25 @@
-"""Roda o plano de experimentos (plan.py) LOCALMENTE, em PARALELO, maximizando
-o uso da(s) GPU(s). Sem AWS.
+"""Runs the experiment plan (plan.py) LOCALLY, in PARALLEL, maximizing
+the use of the GPU(s). No AWS.
 
-Os modelos são pequenos (ConvNextMicro + teacher), então UM treino sozinho
-subutiliza uma GPU grande. Este runner empacota VÁRIOS experimentos por GPU ao
-mesmo tempo (cada job é um subprocesso próprio), dimensionando a concorrência
-pela VRAM livre, e distribui jobs entre múltiplas GPUs em round-robin.
+The models are small (ConvNextMicro + teacher), so ONE training alone
+underutilizes a large GPU. This runner packs SEVERAL experiments per GPU at the
+same time (each job is its own subprocess), sizing the concurrency
+by the free VRAM, and distributes jobs across multiple GPUs in round-robin.
 
-Escalonamento:
-  * onda 1: teachers (+baselines) em paralelo;
-  * um aluno (distill) só entra quando o teacher dele terminou com sucesso
-    (best.pth presente); teacher que falha pula seus dependentes.
-Resumível: jobs com ledger concluído são pulados; treinos retomam do *_last.pth.
+Scheduling:
+  * wave 1: teachers (+baselines) in parallel;
+  * a student (distill) only starts once its teacher finished successfully
+    (best.pth present); a teacher that fails skips its dependents.
+Resumable: jobs with a completed ledger are skipped; trainings resume from *_last.pth.
 
-Handoff de teacher: local, por CAMINHO (teacher_load = <save_root>/<teacher>/best.pth).
+Teacher handoff: local, by PATH (teacher_load = <save_root>/<teacher>/best.pth).
 
-Exemplos:
+Examples:
     export WANDB_API_KEY=...
-    # concorrência AUTO pela VRAM, todas as GPUs:
+    # AUTO concurrency by VRAM, all GPUs:
     python sm/run_local.py --phases teachers phase0 phase1 --data data \
         --wandb-entity gabomfim-unicamp --wandb-project graph-rkd --amp
-    # fixar 6 jobs simultâneos:
+    # fix 6 simultaneous jobs:
     python sm/run_local.py --max-parallel 6 ...
 """
 
@@ -56,7 +56,7 @@ def _teacher_ckpt(save_root, arch, ds):
 # GPU detection / concurrency sizing                                          #
 # --------------------------------------------------------------------------- #
 def detect_gpus():
-    """[(index, free_MiB), ...] via nvidia-smi; [] se não houver GPU."""
+    """[(index, free_MiB), ...] via nvidia-smi; [] if there is no GPU."""
     try:
         out = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=index,memory.free",
@@ -71,10 +71,10 @@ def detect_gpus():
 
 
 def auto_parallel(gpus, per_job_gb):
-    """Nº de jobs simultâneos = soma, por GPU, de floor(VRAM_livre / per_job)."""
+    """Number of simultaneous jobs = sum, per GPU, of floor(free_VRAM / per_job)."""
     if not gpus:
         return 1, []
-    slots = []                      # lista de índices de GPU (um por slot)
+    slots = []                      # list of GPU indices (one per slot)
     for idx, free_mib in gpus:
         n = max(1, int((free_mib / 1024.0) / per_job_gb))
         slots.extend([idx] * n)
@@ -82,7 +82,7 @@ def auto_parallel(gpus, per_job_gb):
 
 
 # --------------------------------------------------------------------------- #
-# params de um job                                                            #
+# params of a job                                                             #
 # --------------------------------------------------------------------------- #
 def build_job(spec, cfg, save_root, workers):
     save_dir = os.path.join(save_root, spec["name"])
@@ -115,7 +115,7 @@ def _dispatch(kind):
 
 
 def run_worker(spec_file):
-    """Executado no SUBPROCESSO: roda exatamente um job in-process."""
+    """Executed in the SUBPROCESS: runs exactly one job in-process."""
     with open(spec_file, encoding="utf-8") as f:
         job = json.load(f)
     _dispatch(job["kind"]).run_with_params(job["params"])
@@ -135,7 +135,7 @@ def schedule(jobs, cfg, save_root, max_parallel, gpu_slots, workers, poll=5):
         if not d:
             return True
         if d in failed or d in skipped:
-            return None      # dependência morta -> pular
+            return None      # dead dependency -> skip
         return d in done or is_done(os.path.join(save_root, d))
 
     def launch(spec, slot):
@@ -158,7 +158,7 @@ def schedule(jobs, cfg, save_root, max_parallel, gpu_slots, workers, poll=5):
 
     total = len(jobs)
     while remaining or running:
-        # preenche slots livres com jobs prontos
+        # fill free slots with ready jobs
         progressed = True
         while progressed and free_slots and remaining:
             progressed = False
@@ -170,11 +170,11 @@ def schedule(jobs, cfg, save_root, max_parallel, gpu_slots, workers, poll=5):
                 ok = dep_ok(spec)
                 if ok is None:
                     remaining.remove(spec); skipped.add(spec["name"])
-                    print(f"[SKIP ] {spec['name']} (teacher falhou)"); progressed = True; continue
+                    print(f"[SKIP ] {spec['name']} (teacher failed)"); progressed = True; continue
                 if ok and free_slots:
                     remaining.remove(spec); launch(spec, free_slots.pop(0))
                     progressed = True
-        # coleta terminados
+        # collect finished ones
         for name, (p, slot, log) in list(running.items()):
             rc = p.poll()
             if rc is None:
@@ -188,7 +188,7 @@ def schedule(jobs, cfg, save_root, max_parallel, gpu_slots, workers, poll=5):
                 print(f"[done ] {name}  ({len(done)}/{total})")
             else:
                 failed.add(name)
-                print(f"[FAIL ] {name} (rc={rc}) — ver {save_root}/{name}/run.log")
+                print(f"[FAIL ] {name} (rc={rc}) — see {save_root}/{name}/run.log")
         if running and not free_slots:
             time.sleep(poll)
         elif not remaining and running:
@@ -197,8 +197,8 @@ def schedule(jobs, cfg, save_root, max_parallel, gpu_slots, workers, poll=5):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="Runner local PARALELO do plano Graph-RKD")
-    p.add_argument("--worker", help="(interno) roda um job a partir de um _job.json")
+    p = argparse.ArgumentParser(description="PARALLEL local runner of the Graph-RKD plan")
+    p.add_argument("--worker", help="(internal) runs a job from a _job.json")
     p.add_argument("--phases", nargs="+", default=["teachers", "phase0", "phase1"],
                    choices=list(plan.PHASES))
     p.add_argument("--datasets", nargs="+")
@@ -215,8 +215,8 @@ def build_parser():
     p.add_argument("--gate-dataset", choices=["cars196", "cub200"])
     p.add_argument("--gate-teacher", choices=["resnet18", "convnext_tiny"])
     p.add_argument("--trimmed", action="store_true",
-                   help="config enxuta (drop hybrid, λg={0.01,0.1,1}, N={3,4,8})")
-    # override da config do HEADLINE (fase 5) — escolha vinda das fases 2-4
+                   help="lean config (drop hybrid, λg={0.01,0.1,1}, N={3,4,8})")
+    # override of the HEADLINE config (phase 5) — choice coming from phases 2-4
     p.add_argument("--headline-method", choices=["profile", "mds"])
     p.add_argument("--headline-norm",
                    choices=["per_graph", "minibatch", "none", "hybrid"])
@@ -225,16 +225,16 @@ def build_parser():
     p.add_argument("--headline-lambda", type=float)
     p.add_argument("--data", default="data")
     p.add_argument("--data-s3", default=data_prep.DEFAULT_S3,
-                   help="prefixo S3 com Cars196.tar/CUB_200_2011.tgz; "
-                        "'' desliga o pull (usa dados locais / download do trainer)")
+                   help="S3 prefix with Cars196.tar/CUB_200_2011.tgz; "
+                        "'' turns off the pull (uses local data / trainer download)")
     p.add_argument("--aws-profile", default=os.environ.get("AWS_PROFILE", "gabomfim"))
     p.add_argument("--save-root", default="experiments_local")
     p.add_argument("--max-parallel", type=int, default=0,
-                   help="jobs simultâneos (0 = auto pela VRAM livre)")
+                   help="simultaneous jobs (0 = auto by free VRAM)")
     p.add_argument("--per-job-gb", type=float, default=4.0,
-                   help="VRAM estimada por job, p/ dimensionar o auto")
+                   help="estimated VRAM per job, to size the auto")
     p.add_argument("--workers", type=int, default=0,
-                   help="dataloader workers por job (0 = auto p/ não saturar a CPU)")
+                   help="dataloader workers per job (0 = auto so as not to saturate the CPU)")
     p.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY",
                                                             "gabomfim-unicamp"))
     p.add_argument("--wandb-project", default="graph-rkd")
@@ -245,7 +245,7 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
-    if a.worker:                       # caminho do subprocesso
+    if a.worker:                       # subprocess path
         return run_worker(a.worker)
 
     cfg = plan.merged_config(
@@ -264,12 +264,12 @@ def main(argv=None):
 
     jobs = plan.build_plan(cfg, a.phases)
 
-    # garante os datasets usados (puxa do S3 e extrai se ainda não estão locais)
+    # ensure the datasets used (pull from S3 and extract if not yet local)
     datasets_used = sorted({s["dataset"] for s in jobs if s.get("dataset")})
     if a.data_s3:
         data_prep.ensure(a.data, datasets_used, a.data_s3, a.aws_profile)
     else:
-        print("[data] --data-s3 vazio: usando dados locais / download do trainer")
+        print("[data] --data-s3 empty: using local data / trainer download")
 
     gpus = detect_gpus()
     if a.max_parallel > 0:
@@ -281,18 +281,18 @@ def main(argv=None):
 
     by_phase, by_kind = plan.summarize(jobs)
     gpu_desc = ", ".join(f"gpu{idx}:{free//1024}GB" for idx, free in gpus) or "CPU"
-    print(f"Plano local: {len(jobs)} jobs | fases {by_phase} | kinds {by_kind}")
-    print(f"GPUs: {gpu_desc} | paralelismo={max_parallel} "
+    print(f"Local plan: {len(jobs)} jobs | phases {by_phase} | kinds {by_kind}")
+    print(f"GPUs: {gpu_desc} | parallelism={max_parallel} "
           f"(~{a.per_job_gb}GB/job) | workers/job={workers}")
     print(f"W&B -> {a.wandb_entity}/{a.wandb_project} | data={a.data} "
           f"| save_root={a.save_root}\n")
 
     done, failed, skipped = schedule(jobs, cfg, a.save_root, max_parallel,
                                      gpu_slots, workers)
-    print(f"\nConcluído: {len(done)} ok, {len(failed)} falhas, "
-          f"{len(skipped)} pulados.")
+    print(f"\nCompleted: {len(done)} ok, {len(failed)} failures, "
+          f"{len(skipped)} skipped.")
     if failed:
-        print("Falhas:", sorted(failed))
+        print("Failures:", sorted(failed))
     return 1 if failed else 0
 
 

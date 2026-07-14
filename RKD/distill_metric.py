@@ -1,22 +1,22 @@
-"""Destilação de METRIC LEARNING: teacher (resnet18/convnext_tiny embedding) ->
-ConvNextMicro (embedding), no split disjunto, recall@K.
+"""METRIC LEARNING distillation: teacher (resnet18/convnext_tiny embedding) ->
+ConvNextMicro (embedding), on the disjoint split, recall@K.
 
-Perda = triplet (tarefa, peso constante) + termo relacional com WARMUP que o
-balanceia contra o triplet:
+Loss = triplet (task, constant weight) + relational term with WARMUP that
+balances it against the triplet:
 
     loss = triplet_ratio*triplet(s, y)
          + rel_scale(epoch) * ( dist_ratio*RKD_dist + angle_ratio*RKD_angle
                                 + graph_ratio*GraphLoss )
 
-rel_scale sobe linearmente de 0->1 na fração inicial das épocas (--rel_warmup_frac):
-cedo os embeddings do aluno são ruído, então a geometria do teacher entra aos
-poucos. Configurações:
-  * Graph-RKD (método): graph_ratio>0, dist=angle=0.
-  * Baseline RKD-distance isolado: dist_ratio>0, angle=graph=0.
-  * Baseline RKD-angle isolado:    angle_ratio>0, dist=graph=0.
+rel_scale ramps linearly 0->1 over the initial fraction of epochs (--rel_warmup_frac):
+early on the student embeddings are noise, so the teacher's geometry enters
+gradually. Configurations:
+  * Graph-RKD (method): graph_ratio>0, dist=angle=0.
+  * Isolated RKD-distance baseline: dist_ratio>0, angle=graph=0.
+  * Isolated RKD-angle baseline:    angle_ratio>0, dist=graph=0.
 
-Sem Hinton KD (metric learning não tem logits compartilhados). Seleção pelo
-melhor recall@1 de VALIDAÇÃO; resumível (W&B + checkpoint).
+No Hinton KD (metric learning has no shared logits). Selection by the best
+VALIDATION recall@1; resumable (W&B + checkpoint).
 """
 
 import argparse
@@ -69,12 +69,12 @@ def build_parser():
     p.add_argument("--triplet_margin", type=float, default=0.2)
     p.add_argument("--triplet_sample", choices=sorted(SAMPLERS), default="distance")
 
-    # relational terms (RKD baselines) + warmup que balanceia contra o triplet
+    # relational terms (RKD baselines) + warmup that balances against the triplet
     p.add_argument("--dist_ratio", type=float, default=0.0)
     p.add_argument("--angle_ratio", type=float, default=0.0)
     p.add_argument("--rel_warmup_frac", type=float, default=0.1,
-                   help="rampa 0->1 do peso relacional (dist/angle/graph) p/ "
-                        "balancear contra o triplet; 0 = sem warmup")
+                   help="ramp 0->1 of the relational weight (dist/angle/graph) to "
+                        "balance against the triplet; 0 = no warmup")
 
     # Graph-RKD
     p.add_argument("--graph_rkd_mode", choices=["off", "regression", "contrastive"],
@@ -83,7 +83,7 @@ def build_parser():
     p.add_argument("--graph_rkd_norm",
                    choices=["per_graph", "minibatch", "none", "hybrid"],
                    default="per_graph",
-                   help="esquema de normalização de escala do descritor (H2)")
+                   help="descriptor scale normalization scheme (H2)")
     p.add_argument("--graph_rkd_nodes", type=int, default=8)
     p.add_argument("--graph_rkd_ratio", type=float, default=0.0)
     p.add_argument("--graph_rkd_sampling", choices=["partition", "random", "log"],
@@ -138,7 +138,7 @@ def _params_to_cli_args(params):
 
 
 def rel_scale_at(epoch, total_epochs, warmup_frac):
-    """Rampa linear 0->1 do peso relacional na fração inicial das épocas."""
+    """Linear ramp 0->1 of the relational weight over the initial fraction of epochs."""
     if warmup_frac <= 0:
         return 1.0
     w = max(1, int(warmup_frac * total_epochs))
@@ -228,7 +228,7 @@ def run_experiment(opts):
     art_name = "convnextmicro-metric-distill-%s-%s" % (opts.teacher_arch, opts.dataset)
     primary = opts.recall[0]
 
-    # referência: recall do teacher nos mesmos splits
+    # reference: teacher recall on the same splits
     teacher_metrics = evaluate_recall_splits(teacher, loaders, device, l2, opts.recall,
                                              tag="teacher ")
     run.log(recall_log_dict(teacher_metrics, prefix="teacher/"), step=0)
@@ -247,11 +247,11 @@ def run_experiment(opts):
     for epoch in range(start_epoch + 1, opts.epochs + 1):
         student.train()
         rel = rel_scale_at(epoch, opts.epochs, opts.rel_warmup_frac)
-        # Somatórios ponderados (o que entra na loss) e CRUS (não-ponderados, I7):
-        # um termo silenciosamente-zerado deve ser detectável separadamente.
+        # Weighted sums (what enters the loss) and RAW ones (unweighted, I7):
+        # a silently-zeroed term must be detectable separately.
         sums = {"loss": 0, "triplet": 0, "dist": 0, "angle": 0, "graph": 0}
         raw_sums = {"triplet": 0, "dist": 0, "angle": 0, "graph": 0}
-        epoch_t0 = time.time()   # custo por passo (instrumentação §6 / per-order cost)
+        epoch_t0 = time.time()   # per-step cost (instrumentation §6 / per-order cost)
         pbar = tqdm(loaders["train"], ncols=100, desc=f"[MDistill {epoch}]")
         for images, labels in pbar:
             images, labels = images.to(device), labels.to(device)

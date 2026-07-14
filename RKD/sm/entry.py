@@ -1,17 +1,17 @@
-"""Entrypoint executado DENTRO do job de treino do SageMaker.
+"""Entrypoint executed INSIDE the SageMaker training job.
 
-O SageMaker invoca este script (entry_point) com os hiperparâmetros do estimator
-convertidos em ``--flag valor``. Passamos UM único hiperparâmetro ``--spec`` com
-o JobSpec serializado (JSON) para evitar problemas de listas/aspas. Este script:
+SageMaker invokes this script (entry_point) with the estimator's hyperparameters
+converted into ``--flag value``. We pass ONE single hyperparameter ``--spec`` with
+the serialized JobSpec (JSON) to avoid list/quote issues. This script:
 
-  1. lê o ``--spec`` (kind + params do trainer, já com wandb_* e teacher);
-  2. resolve, a partir do ambiente do SageMaker, o diretório de DADOS (canal de
-     input montado, ou baixa via torchvision) e o de CHECKPOINT (resumível);
-  3. despacha para o trainer certo (finetune_metric / train_metric_baseline /
+  1. reads the ``--spec`` (kind + trainer params, already with wandb_* and teacher);
+  2. resolves, from the SageMaker environment, the DATA directory (mounted input
+     channel, or downloads via torchvision) and the CHECKPOINT one (resumable);
+  3. dispatches to the right trainer (finetune_metric / train_metric_baseline /
      distill_metric) via ``run_with_params``.
 
-cwd no container = source_dir (RKD/), então ``import distill_metric`` etc. funciona.
-W&B: precisa de ``WANDB_API_KEY`` no ambiente (o launcher repassa).
+cwd in the container = source_dir (RKD/), so ``import distill_metric`` etc. works.
+W&B: needs ``WANDB_API_KEY`` in the environment (the launcher forwards it).
 """
 
 import argparse
@@ -21,20 +21,20 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))          # RKD/sm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # RKD
-import data_prep  # noqa: E402  (mesma camada de cache do local/Modal)
+import data_prep  # noqa: E402  (same cache layer as local/Modal)
 
-# nomes de checkpoint "last" por trainer (p/ resume)
+# "last" checkpoint names per trainer (for resume)
 LAST_NAME = {"teacher": "last.pth", "baseline": "baseline_last.pth",
              "distill": "student_last.pth"}
 
 
 def resolve_data_dir():
-    """Dir de CACHE dos datasets (mesma camada `data_prep` do local/Modal).
+    """CACHE dir for the datasets (same `data_prep` layer as local/Modal).
 
-    Preferência: um canal de input já montado (``SM_CHANNEL_DATA`` — dados
-    pré-staged), senão ``/opt/ml/checkpoints`` (sincronizado com S3, sobrevive a
-    resume/spot => cache entre re-execuções do mesmo job), senão ``/opt/ml/data``.
-    O download em si é feito por ``data_prep.ensure`` (HTTPS público, sem creds)."""
+    Preference: an already-mounted input channel (``SM_CHANNEL_DATA`` — pre-staged
+    data), else ``/opt/ml/checkpoints`` (synced with S3, survives
+    resume/spot => cache across re-runs of the same job), else ``/opt/ml/data``.
+    The download itself is done by ``data_prep.ensure`` (public HTTPS, no creds)."""
     ch = os.environ.get("SM_CHANNEL_DATA") or os.environ.get("DATA_DIR")
     if ch and os.path.isdir(ch):
         return ch
@@ -47,8 +47,8 @@ def resolve_data_dir():
 
 
 def resolve_ckpt_dir():
-    """Diretório de checkpoint resumível: usa /opt/ml/checkpoints (sincronizado
-    com checkpoint_s3_uri, sobrevive a spot/retry) se existir; senão o model dir."""
+    """Resumable checkpoint directory: uses /opt/ml/checkpoints (synced
+    with checkpoint_s3_uri, survives spot/retry) if it exists; else the model dir."""
     ck = "/opt/ml/checkpoints"
     if os.path.isdir(ck):
         return ck
@@ -63,7 +63,7 @@ def dispatch(kind, params):
     elif kind == "distill":
         import distill_metric as trainer
     else:
-        raise SystemExit(f"kind desconhecido: {kind}")
+        raise SystemExit(f"unknown kind: {kind}")
     return trainer.run_with_params(params)
 
 
@@ -80,7 +80,7 @@ def main(argv=None):
     params["resume"] = os.path.join(save_dir, LAST_NAME[kind])
     cache = resolve_data_dir()
     ds = params.get("dataset")
-    if ds:                                          # baixa (público) + cacheia
+    if ds:                                          # download (public) + cache
         data_prep.ensure(cache, [ds], s3_prefix=data_prep.DEFAULT_S3)
     params["data"] = cache
     params.setdefault("wandb_mode", "online")

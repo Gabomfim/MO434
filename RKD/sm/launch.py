@@ -1,25 +1,25 @@
-"""Dispara o plano de experimentos Graph-RKD como jobs de treino do SageMaker,
-EM PARALELO, logando no W&B do usuário.
+"""Fires the Graph-RKD experiment plan as SageMaker training jobs,
+IN PARALLEL, logging to the user's W&B.
 
-Por padrão faz **dry-run**: monta o plano, imprime o resumo e grava ``plan.json``
-SEM tocar na AWS. Só com ``--launch`` cria os jobs (custa dinheiro).
+By default it does a **dry-run**: builds the plan, prints the summary and writes
+``plan.json`` WITHOUT touching AWS. Only ``--launch`` creates the jobs (costs money).
 
-Paralelismo e dependências:
-  * onda 1: teachers + baselines (sem dependência) sobem juntos;
-  * espera SÓ os teachers concluírem (baselines seguem em paralelo);
-  * onda 2: todos os jobs de destilação sobem juntos (puxam o teacher por
-    artefato W&B ``metric-<arch>-<dataset>:best``).
-Cada job é 1 instância; a config (role/bucket/região/instância/spot) vem por flag
-ou variável de ambiente.
+Parallelism and dependencies:
+  * wave 1: teachers + baselines (no dependency) go up together;
+  * waits ONLY for the teachers to finish (baselines proceed in parallel);
+  * wave 2: all distillation jobs go up together (they pull the teacher by
+    W&B artifact ``metric-<arch>-<dataset>:best``).
+Each job is 1 instance; the config (role/bucket/region/instance/spot) comes via flag
+or environment variable.
 
-Resumibilidade: o nome LÓGICO do job (plan) fixa o ``wandb_id`` (retoma a mesma
-run) e o ``checkpoint_s3_uri`` (retoma o treino); o nome do job SageMaker recebe
-um sufixo único (jobs SageMaker não podem reusar nome).
+Resumability: the LOGICAL job name (plan) fixes the ``wandb_id`` (resumes the same
+run) and the ``checkpoint_s3_uri`` (resumes training); the SageMaker job name gets
+a unique suffix (SageMaker jobs cannot reuse a name).
 
-Exemplo (dry-run):
+Example (dry-run):
     python sm/launch.py --phases teachers phase0 phase1
-Exemplo (lançar de verdade):
-    export WANDB_API_KEY=...   # obrigatório
+Example (launch for real):
+    export WANDB_API_KEY=...   # required
     python sm/launch.py --phases teachers phase0 --launch \
         --region us-east-1 --role arn:aws:iam::123:role/SageMakerRole \
         --bucket my-bucket --wandb-entity myuser --wandb-project graph-rkd
@@ -32,11 +32,11 @@ import os
 import sys
 import time
 
-import plan  # módulo irmão (RKD/sm/plan.py)
+import plan  # sibling module (RKD/sm/plan.py)
 
 RKD_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../RKD
 ENTRY_POINT = "sm/entry.py"
-# arquivo (objeto S3) por dataset -> canal de dados enxuto por job
+# file (S3 object) per dataset -> lean data channel per job
 ARCHIVE = {"cars196": "Cars196.tar", "cub200": "CUB_200_2011.tgz"}
 
 
@@ -45,7 +45,7 @@ def _stable_id(name):
 
 
 def _job_name(logical, run_tag):
-    """Nome de job SageMaker único e válido (<=63, [a-zA-Z0-9-])."""
+    """Unique and valid SageMaker job name (<=63, [a-zA-Z0-9-])."""
     base = "".join(c if c.isalnum() or c == "-" else "-" for c in logical)
     suffix = "-" + run_tag
     return base[: 63 - len(suffix)].strip("-") + suffix
@@ -58,7 +58,7 @@ def teacher_ref(cfg, spec):
 
 
 def job_params(cfg, spec):
-    """Params finais do trainer p/ este job: injeta W&B e o teacher."""
+    """Final trainer params for this job: injects W&B and the teacher."""
     params = dict(spec["params"])
     params["wandb_project"] = cfg["wandb_project"]
     if cfg["wandb_entity"]:
@@ -74,13 +74,13 @@ def job_params(cfg, spec):
 
 
 def build_spec_payload(cfg, spec):
-    """JobSpec compacto passado ao entry.py via hiperparâmetro --spec."""
+    """Compact JobSpec passed to entry.py via the --spec hyperparameter."""
     return {"kind": spec["kind"], "name": spec["name"],
             "params": job_params(cfg, spec)}
 
 
 # --------------------------------------------------------------------------- #
-# AWS (importado só quando --launch)                                           #
+# AWS (imported only when --launch)                                            #
 # --------------------------------------------------------------------------- #
 def make_estimator(cfg, spec, sm_session, run_tag):
     from sagemaker.pytorch import PyTorch
@@ -88,7 +88,7 @@ def make_estimator(cfg, spec, sm_session, run_tag):
     payload = build_spec_payload(cfg, spec)
     spec_json = json.dumps(payload, separators=(",", ":"))
     if len(spec_json) > 2400:
-        raise SystemExit(f"spec JSON grande demais ({len(spec_json)}B) p/ hiperparâmetro")
+        raise SystemExit(f"spec JSON too large ({len(spec_json)}B) for hyperparameter")
 
     env = {"WANDB_API_KEY": os.environ.get("WANDB_API_KEY", ""),
            "WANDB_START_METHOD": "thread"}
@@ -100,7 +100,7 @@ def make_estimator(cfg, spec, sm_session, run_tag):
         sagemaker_session=sm_session, base_job_name=spec["name"][:40],
     )
     if cfg.get("local"):
-        # SageMaker LOCAL MODE: roda o container na GPU local via Docker (sem cota).
+        # SageMaker LOCAL MODE: runs the container on the local GPU via Docker (no quota).
         kwargs.update(instance_type="local_gpu" if cfg["local_gpu"] else "local",
                       output_path=f"file://{os.path.abspath('sm_local_output')}")
         est = PyTorch(**kwargs)
@@ -119,15 +119,15 @@ def make_estimator(cfg, spec, sm_session, run_tag):
         kwargs.update(use_spot_instances=True,
                       max_wait=max(cfg["max_run"], cfg["max_wait"]))
     est = PyTorch(**kwargs)
-    # Sem canal de dados: entry.py usa data_prep (download público + cache em
-    # /opt/ml/checkpoints, unificado com local/Modal). Opcional: pré-montar uma
-    # árvore já extraída como canal 'data' (SM_CHANNEL_DATA) e o entry a reusa.
+    # No data channel: entry.py uses data_prep (public download + cache in
+    # /opt/ml/checkpoints, unified with local/Modal). Optional: pre-mount an
+    # already-extracted tree as the 'data' channel (SM_CHANNEL_DATA) and entry reuses it.
     inputs = {"data": cfg["data_s3"]} if cfg["data_s3"] else None
     return est, inputs, _job_name(spec["name"], run_tag)
 
 
 def wait_for(sm_client, job_names, poll=30, timeout=None):
-    """Espera todos os job_names atingirem Completed; falha se algum Failed/Stopped."""
+    """Waits for all job_names to reach Completed; fails if any is Failed/Stopped."""
     start = time.time()
     pending = set(job_names)
     while pending:
@@ -137,22 +137,22 @@ def wait_for(sm_client, job_names, poll=30, timeout=None):
             if st == "Completed":
                 done.add(jn)
             elif st in ("Failed", "Stopped"):
-                raise SystemExit(f"Job de teacher {jn} terminou em {st} — abortando "
-                                 "(os alunos dependem dele).")
+                raise SystemExit(f"Teacher job {jn} ended in {st} — aborting "
+                                 "(the students depend on it).")
         pending -= done
         if done:
-            print(f"[wait] concluídos: {sorted(done)} | restam {len(pending)}", flush=True)
+            print(f"[wait] completed: {sorted(done)} | remaining {len(pending)}", flush=True)
         if not pending:
             break
         if timeout and time.time() - start > timeout:
-            raise SystemExit(f"[wait] timeout esperando teachers: {sorted(pending)}")
+            raise SystemExit(f"[wait] timeout waiting for teachers: {sorted(pending)}")
         time.sleep(poll)
 
 
 def do_launch_local(cfg, jobs):
-    """SageMaker LOCAL MODE: roda cada job no container, na GPU local (Docker),
-    SEM cota AWS. Sequencial (local mode é síncrono): teachers -> alunos. Os
-    alunos puxam o teacher pelo artefato W&B, então precisam de WANDB online."""
+    """SageMaker LOCAL MODE: runs each job in the container, on the local GPU (Docker),
+    WITHOUT AWS quota. Sequential (local mode is synchronous): teachers -> students. The
+    students pull the teacher via the W&B artifact, so they need WANDB online."""
     from sagemaker.local import LocalSession
     sm_session = LocalSession()
     sm_session.config = {"local": {"local_code": True}}
@@ -160,13 +160,13 @@ def do_launch_local(cfg, jobs):
     order = ([j for j in jobs if j["kind"] == "teacher" and not cfg["skip_teachers"]]
              + [j for j in jobs if j["kind"] == "baseline"]
              + [j for j in jobs if j["kind"] == "distill"])
-    print(f"[local] {len(order)} jobs sequenciais via Docker "
+    print(f"[local] {len(order)} sequential jobs via Docker "
           f"(instance={'local_gpu' if cfg['local_gpu'] else 'local'}).")
     for s in order:
         est, inputs, jn = make_estimator(cfg, s, sm_session, run_tag)
-        print(f"[local] treinando {s['name']} ({s['phase']}/{s['kind']})...", flush=True)
+        print(f"[local] training {s['name']} ({s['phase']}/{s['kind']})...", flush=True)
         est.fit(inputs=inputs, wait=True, job_name=jn)
-    print(f"\n[local] {len(order)} jobs concluídos. Resultados no W&B "
+    print(f"\n[local] {len(order)} jobs completed. Results on W&B "
           f"({cfg['wandb_entity'] or '<default>'}/{cfg['wandb_project']}).")
 
 
@@ -194,21 +194,21 @@ def do_launch(cfg, jobs):
         launched[spec["name"]] = jn
         return jn
 
-    # onda 1: teachers + baselines
+    # wave 1: teachers + baselines
     teacher_jn = [submit(s) for s in teachers]
     for s in independents:
         submit(s)
 
-    # espera só os teachers; então onda 2 (destilações)
+    # wait only for the teachers; then wave 2 (distillations)
     if distills:
         if teacher_jn:
-            print(f"[wait] aguardando {len(teacher_jn)} teacher(s) concluírem...", flush=True)
+            print(f"[wait] waiting for {len(teacher_jn)} teacher(s) to finish...", flush=True)
             wait_for(sm_client, teacher_jn, timeout=cfg["wait_timeout"])
         for s in distills:
             submit(s)
 
-    print(f"\n[done] {len(launched)} jobs disparados na região {cfg['region']}.")
-    print("Acompanhe no console SageMaker (Training jobs) e no W&B "
+    print(f"\n[done] {len(launched)} jobs fired in region {cfg['region']}.")
+    print("Track it in the SageMaker console (Training jobs) and on W&B "
           f"({cfg['wandb_entity'] or '<default>'}/{cfg['wandb_project']}).")
     return launched
 
@@ -218,18 +218,18 @@ def do_launch(cfg, jobs):
 # --------------------------------------------------------------------------- #
 def print_plan(cfg, jobs):
     by_phase, by_kind = plan.summarize(jobs)
-    print("\n================ PLANO Graph-RKD (SageMaker) ================")
+    print("\n================ Graph-RKD PLAN (SageMaker) ================")
     print(f"phases={cfg['phases']}")
     print(f"datasets={cfg['datasets']} teachers={cfg['teachers']} "
           f"methods={cfg['methods']} objectives={cfg['objectives']}")
     print(f"norms={cfg['norms']} n_list={cfg['n_list']} λg_grid={cfg['lambda_grid']} "
           f"seeds={cfg['seeds']}")
     print(f"W&B -> entity={cfg['wandb_entity'] or '<default>'} project={cfg['wandb_project']}")
-    print(f"instância={cfg['instance_type']} spot={cfg['use_spot']} "
+    print(f"instance={cfg['instance_type']} spot={cfg['use_spot']} "
           f"region={cfg['region'] or '<unset>'}")
-    print("por fase: " + " ".join(f"{k}={v}" for k, v in sorted(by_phase.items())))
-    print("por kind: " + " ".join(f"{k}={v}" for k, v in sorted(by_kind.items())))
-    print(f"TOTAL de jobs: {len(jobs)}")
+    print("per phase: " + " ".join(f"{k}={v}" for k, v in sorted(by_phase.items())))
+    print("per kind: " + " ".join(f"{k}={v}" for k, v in sorted(by_kind.items())))
+    print(f"TOTAL jobs: {len(jobs)}")
     print("-" * 60)
     for s in jobs:
         dep = f"  <- {s['depends_on']}" if s.get("depends_on") else ""
@@ -237,18 +237,18 @@ def print_plan(cfg, jobs):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="Launcher SageMaker do Graph-RKD")
+    p = argparse.ArgumentParser(description="Graph-RKD SageMaker launcher")
     p.add_argument("--phases", nargs="+", default=["teachers", "phase0", "phase1"],
                    choices=list(plan.PHASES))
     p.add_argument("--launch", action="store_true",
-                   help="cria os jobs de verdade (default: dry-run)")
+                   help="creates the jobs for real (default: dry-run)")
     p.add_argument("--local", action="store_true",
-                   help="SageMaker LOCAL MODE: roda na GPU local via Docker (sem cota)")
+                   help="SageMaker LOCAL MODE: runs on the local GPU via Docker (no quota)")
     p.add_argument("--local-cpu", action="store_true",
-                   help="com --local, usar instance 'local' (CPU) em vez de local_gpu")
+                   help="with --local, use instance 'local' (CPU) instead of local_gpu")
     p.add_argument("--data-local", default="data",
-                   help="dir local dos dados p/ --local (montado como canal file://)")
-    p.add_argument("--out", default="plan.json", help="onde gravar o plano (JSON)")
+                   help="local data dir for --local (mounted as a file:// channel)")
+    p.add_argument("--out", default="plan.json", help="where to write the plan (JSON)")
 
     # W&B
     p.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY"))
@@ -260,20 +260,20 @@ def build_parser():
     p.add_argument("--bucket", default=os.environ.get("SAGEMAKER_BUCKET"))
     p.add_argument("--prefix", default="graph-rkd")
     p.add_argument("--data-s3", default=os.environ.get("GRAPH_RKD_DATA_S3"),
-                   help="s3://.../ com Cars196/ e CUB_200_2011/ (canal 'data'); "
-                        "se omitido, cada job baixa via torchvision")
+                   help="s3://.../ with Cars196/ and CUB_200_2011/ (the 'data' channel); "
+                        "if omitted, each job downloads via torchvision")
     p.add_argument("--instance-type", default="ml.g5.xlarge")
     p.add_argument("--framework-version", default="2.2")
     p.add_argument("--py-version", default="py310")
     p.add_argument("--volume-size", type=int, default=100)
     p.add_argument("--max-run", type=int, default=48 * 3600)
     p.add_argument("--max-wait", type=int, default=72 * 3600)
-    p.add_argument("--no-spot", action="store_true", help="desliga managed spot")
+    p.add_argument("--no-spot", action="store_true", help="turns off managed spot")
     p.add_argument("--skip-teachers", action="store_true",
-                   help="não treina teachers (assume artefatos W&B já existentes)")
+                   help="does not train teachers (assumes W&B artifacts already exist)")
     p.add_argument("--wait-timeout", type=int, default=None)
 
-    # overrides do plano (senão usa DEFAULTS)
+    # plan overrides (otherwise uses DEFAULTS)
     p.add_argument("--datasets", nargs="+")
     p.add_argument("--teachers", nargs="+")
     p.add_argument("--methods", nargs="+")
@@ -288,7 +288,7 @@ def build_parser():
     p.add_argument("--gate-dataset", choices=["cars196", "cub200"])
     p.add_argument("--gate-teacher", choices=["resnet18", "convnext_tiny"])
     p.add_argument("--trimmed", action="store_true",
-                   help="config enxuta (drop hybrid, λg={0.01,0.1,1}, N={3,4,8})")
+                   help="lean config (drop hybrid, λg={0.01,0.1,1}, N={3,4,8})")
     return p
 
 
@@ -304,7 +304,7 @@ def main(argv=None):
         gate_dataset=a.gate_dataset, gate_teacher=a.gate_teacher,
         wandb_entity=a.wandb_entity, wandb_project=a.wandb_project,
     )
-    # config de execução (não faz parte do plano puro)
+    # execution config (not part of the pure plan)
     cfg.update(phases=a.phases, region=a.region, role=a.role, bucket=a.bucket,
                prefix=a.prefix, data_s3=a.data_s3, instance_type=a.instance_type,
                framework_version=a.framework_version, py_version=a.py_version,
@@ -321,19 +321,19 @@ def main(argv=None):
                for s in jobs]
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
-    print(f"\nPlano gravado em {a.out} ({len(jobs)} jobs).")
+    print(f"\nPlan written to {a.out} ({len(jobs)} jobs).")
 
     if not a.launch:
         mode = "LOCAL MODE (Docker)" if a.local else "AWS"
-        print(f"\n(dry-run: nada criado. Use --launch p/ disparar em {mode}.)")
+        print(f"\n(dry-run: nothing created. Use --launch to fire on {mode}.)")
         return
     if not os.environ.get("WANDB_API_KEY"):
-        raise SystemExit("--launch exige WANDB_API_KEY no ambiente (p/ logar no W&B).")
+        raise SystemExit("--launch requires WANDB_API_KEY in the environment (to log to W&B).")
     if not cfg["local"]:
         missing = [k for k in ("region", "role", "bucket") if not cfg[k]]
         if missing:
-            raise SystemExit(f"--launch exige {missing} (flag ou variável de ambiente). "
-                             "Ou use --local p/ rodar na GPU local via Docker.")
+            raise SystemExit(f"--launch requires {missing} (flag or environment variable). "
+                             "Or use --local to run on the local GPU via Docker.")
     do_launch(cfg, jobs)
 
 

@@ -15,10 +15,10 @@ import wandb
 
 
 def stable_run_id(name):
-    """ID de run W&B determinístico a partir de um nome estável.
+    """Deterministic W&B run ID from a stable name.
 
-    Reusar o mesmo id (com resume='allow') faz um job reiniciado RETOMAR a mesma
-    run no W&B em vez de criar outra. 16 hex de sha1 -> seguro p/ id de run.
+    Reusing the same id (with resume='allow') makes a restarted job RESUME the same
+    run in W&B instead of creating another. 16 hex of sha1 -> safe for a run id.
     """
     return hashlib.sha1(name.encode("utf-8")).hexdigest()[:16]
 

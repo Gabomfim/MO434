@@ -1,20 +1,20 @@
-"""Backend Modal: roda o plano Graph-RKD em GPUs ALUGADAS, em paralelo, puxando
-os datasets do S3 e logando no W&B do usuário. Sem cota AWS, pagamento por segundo.
+"""Modal backend: runs the Graph-RKD plan on RENTED GPUs, in parallel, pulling
+the datasets from S3 and logging to the user's W&B. No AWS quota, pay per second.
 
-Pré-requisitos (uma vez):
+Prerequisites (one time):
     pip install modal
-    modal setup                                   # autentica a conta Modal
+    modal setup                                   # authenticates the Modal account
     modal secret create wandb WANDB_API_KEY=xxxxx
     modal secret create aws AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx \
         AWS_DEFAULT_REGION=us-east-1
 
-Uso:
+Usage:
     modal run --detach sm/run_modal.py --phases "teachers phase0 phase1"
     modal run --detach sm/run_modal.py --phases "phase5" --gpu A10G
 
-Paralelismo: `train_job.map(...)` sobe um container GPU por job e autoescala. Os
-teachers rodam primeiro (barreira); os alunos puxam o teacher pelo artefato W&B
-``metric-<arch>-<dataset>:best`` (mesmo mecanismo do backend SageMaker).
+Parallelism: `train_job.map(...)` spins up one GPU container per job and autoscales. The
+teachers run first (barrier); the students pull the teacher via the W&B artifact
+``metric-<arch>-<dataset>:best`` (same mechanism as the SageMaker backend).
 """
 
 import os
@@ -35,19 +35,19 @@ image = (
 
 app = modal.App("graph-rkd")
 
-# Volume persistente = CACHE dos datasets extraídos, compartilhado entre TODOS os
-# containers. Baixamos/extraímos UMA vez (prepare_data) e os train_jobs só leem —
-# antes cada container re-baixava o Cars.tar (4 GB). Download público (sem creds).
+# Persistent Volume = CACHE of the extracted datasets, shared across ALL
+# containers. We download/extract ONCE (prepare_data) and the train_jobs only read —
+# before, each container re-downloaded the Cars.tar (4 GB). Public download (no creds).
 data_vol = modal.Volume.from_name("graph-rkd-data", create_if_missing=True)
 
 
 @app.function(image=image, volumes={"/data": data_vol}, timeout=2 * 3600)
 def prepare_data(datasets: list, data_s3: str):
-    """Popula o Volume /data (uma vez) com os datasets extraídos e commita."""
+    """Populates the /data Volume (once) with the extracted datasets and commits."""
     sys.path.insert(0, "/root/RKD/sm")
     import data_prep
     data_prep.ensure("/data", datasets, s3_prefix=data_s3)
-    data_vol.commit()                       # persiste p/ os demais containers
+    data_vol.commit()                       # persists for the other containers
     return sorted(datasets)
 
 
@@ -55,8 +55,8 @@ def prepare_data(datasets: list, data_s3: str):
               timeout=8 * 3600, volumes={"/data": data_vol},
               secrets=[modal.Secret.from_name("wandb"), modal.Secret.from_name("aws")])
 def train_job(spec: dict):
-    """Roda UM job (teacher/baseline/distill) num container GPU. O dataset já
-    está no Volume /data (cache) — data_prep vê o marcador e não baixa nada."""
+    """Runs ONE job (teacher/baseline/distill) in a GPU container. The dataset is
+    already in the /data Volume (cache) — data_prep sees the marker and downloads nothing."""
     sys.path.insert(0, "/root/RKD")
     sys.path.insert(0, "/root/RKD/sm")
     os.chdir("/root/RKD")
@@ -64,7 +64,7 @@ def train_job(spec: dict):
 
     ds = spec["params"].get("dataset")
     if ds:
-        data_prep.ensure("/data", [ds], s3_prefix=spec["data_s3"])  # cache hit no Volume
+        data_prep.ensure("/data", [ds], s3_prefix=spec["data_s3"])  # cache hit on the Volume
     params = dict(spec["params"])
     params["data"] = "/data"
     params["save_dir"] = f"/root/out/{spec['name']}"
@@ -83,27 +83,27 @@ def train_job(spec: dict):
 
 @app.function(image=image, timeout=24 * 3600)
 def driver(teachers: list, rest: list, data_s3: str):
-    """Orquestra a campanha DENTRO do Modal (não no laptop): cacheia os datasets
-    no Volume UMA vez, depois barreira dos teachers e fan-out dos alunos. Rodar a
-    orquestração server-side torna a campanha imune à conexão local (a versão
-    antiga falhava porque o ``local_entrypoint`` segurava o ``.map()`` por ~40 min
-    no laptop e a rede caía -> 'function is stopped')."""
+    """Orchestrates the campaign INSIDE Modal (not on the laptop): caches the datasets
+    on the Volume ONCE, then the teacher barrier and the student fan-out. Running the
+    orchestration server-side makes the campaign immune to the local connection (the old
+    version failed because the ``local_entrypoint`` held the ``.map()`` for ~40 min
+    on the laptop and the network dropped -> 'function is stopped')."""
     datasets = sorted({s["params"]["dataset"] for s in (teachers + rest)
                        if s["params"].get("dataset")})
     if datasets:
-        print("preparando datasets no cache (Volume):", datasets)
-        prepare_data.remote(datasets, data_s3)     # download/extract único
+        print("preparing datasets in the cache (Volume):", datasets)
+        prepare_data.remote(datasets, data_s3)     # single download/extract
     if teachers:
         tres = list(train_job.map(teachers, return_exceptions=True))
         failed = [str(r) for r in tres if isinstance(r, Exception)]
         if failed:
-            print("teacher(s) FALHARAM, abortando alunos:", failed)
+            print("teacher(s) FAILED, aborting students:", failed)
             return {"teacher_failed": failed}
         print("teachers ok:", [r for r in tres if not isinstance(r, Exception)])
     sres = list(train_job.map(rest, return_exceptions=True))
     ok = [r for r in sres if not isinstance(r, Exception)]
     bad = [str(r) for r in sres if isinstance(r, Exception)]
-    print(f"alunos: {len(ok)} ok, {len(bad)} falhas", ("| falhas: " + str(bad)) if bad else "")
+    print(f"students: {len(ok)} ok, {len(bad)} failures", ("| failures: " + str(bad)) if bad else "")
     return {"ok": ok, "failed": bad}
 
 
@@ -117,11 +117,11 @@ def main(phases: str = "teachers phase0 phase1",
          headline_method: str = "", headline_norm: str = "",
          headline_objective: str = "", headline_nodes: int = 0,
          headline_lambda: float = 0.0):
-    """``only`` = filtro (substrings separadas por vírgula) sobre os NOMES dos jobs,
-    p/ (re)rodar um subconjunto — ex.: --only lg100-s0 roda só aquele ponto de λg.
-    Se o filtro excluir os teachers, eles são pulados (usa-se o artefato W&B).
-    ``student_epochs``/``search_epochs`` (>0) sobrescrevem o orçamento de época
-    (controle de custo/convergência)."""
+    """``only`` = filter (comma-separated substrings) over the job NAMES,
+    to (re)run a subset — e.g.: --only lg100-s0 runs only that λg point.
+    If the filter excludes the teachers, they are skipped (the W&B artifact is used).
+    ``student_epochs``/``search_epochs`` (>0) override the epoch budget
+    (cost/convergence control)."""
     sys.path.insert(0, os.path.join(RKD_DIR, "sm"))
     import plan
     import launch
@@ -153,14 +153,14 @@ def main(phases: str = "teachers phase0 phase1",
     if only:
         subs = [x.strip() for x in only.split(",") if x.strip()]
         specs = [s for s in specs if any(x in s["name"] for x in subs)]
-        print("filtro --only ->", [s["name"] for s in specs])
+        print("--only filter ->", [s["name"] for s in specs])
 
     teachers = [s for s in specs if s["kind"] == "teacher"]
     rest = [s for s in specs if s["kind"] != "teacher"]
-    # Spawn (fire-and-forget) do driver: TODA a orquestração + treino roda no Modal.
-    # Com `modal run --detach`, o app segue vivo mesmo que o laptop desconecte.
+    # Spawn (fire-and-forget) the driver: ALL orchestration + training runs on Modal.
+    # With `modal run --detach`, the app stays alive even if the laptop disconnects.
     call = driver.spawn(teachers, rest)
-    print(f"Modal: {len(teachers)} teachers -> {len(rest)} alunos "
+    print(f"Modal: {len(teachers)} teachers -> {len(rest)} students "
           f"| W&B {wandb_entity}/{wandb_project}")
-    print(f"driver spawned (call id: {call.object_id}); rode com `modal run --detach`. "
-          "Acompanhe em modal.com/apps e no W&B.")
+    print(f"driver spawned (call id: {call.object_id}); run with `modal run --detach`. "
+          "Track it at modal.com/apps and on W&B.")

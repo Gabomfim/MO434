@@ -1,17 +1,17 @@
-"""Backbones de professor para classificação, com interface uniforme.
+"""Teacher backbones for classification, with a uniform interface.
 
-Cada wrapper expõe:
+Each wrapper exposes:
   * ``forward(x) -> logits``
   * ``forward_features(x) -> {"stage2", "embedding", "logits"}``
-  * ``.head`` (a camada Linear final, p/ learning rate diferenciado)
+  * ``.head`` (the final Linear layer, for a differentiated learning rate)
 
-``stage2`` é sempre o mapa de ativação 28x28 do 2º estágio, pareável com o
-stage-2 da ConvNextMicro (o AT agrega sobre canais, então a diferença de
-canais não importa). ``embedding`` é o vetor agrupado pré-classificador.
+``stage2`` is always the 28x28 activation map of the 2nd stage, pairable with
+ConvNextMicro's stage-2 (AT aggregates over channels, so the channel
+difference does not matter). ``embedding`` is the pooled pre-classifier vector.
 
-O mesmo wrapper é usado no fine-tune (treina ``forward``) e na destilação
-(usa ``forward_features``), então o checkpoint salvo no fine-tune é carregado
-diretamente como professor (mesmo formato de ``state_dict``).
+The same wrapper is used in fine-tuning (trains ``forward``) and in distillation
+(uses ``forward_features``), so the checkpoint saved during fine-tuning is loaded
+directly as the teacher (same ``state_dict`` format).
 """
 
 import torch
@@ -20,7 +20,7 @@ import torchvision
 
 
 class ResNet18Teacher(nn.Module):
-    """ResNet-18: stage2 = saída de layer2 (28x28), embedding = 512."""
+    """ResNet-18: stage2 = output of layer2 (28x28), embedding = 512."""
     embedding_dim = 512
 
     def __init__(self, num_classes, pretrained=False, freeze_backbone=False):
@@ -51,7 +51,7 @@ class ResNet18Teacher(nn.Module):
 
 
 class ConvNextTinyTeacher(nn.Module):
-    """ConvNeXt-Tiny: stage2 = saída de features[:4] (28x28), embedding = 768."""
+    """ConvNeXt-Tiny: stage2 = output of features[:4] (28x28), embedding = 768."""
     embedding_dim = 768
 
     def __init__(self, num_classes, pretrained=False, freeze_backbone=False):
@@ -74,7 +74,7 @@ class ConvNextTinyTeacher(nn.Module):
         stage2 = None
         for i, blk in enumerate(self.m.features):
             f = blk(f)
-            if i == 3:                # após o 2º estágio (28x28)
+            if i == 3:                # after the 2nd stage (28x28)
                 stage2 = f
         pooled = self.m.avgpool(f)              # (N, C, 1, 1)
         emb = torch.flatten(pooled, 1)          # (N, 768)
@@ -85,7 +85,7 @@ class ConvNextTinyTeacher(nn.Module):
         return self.forward_features(x)["logits"]
 
 
-# arch -> (classe, otimizador default p/ fine-tune, lr default do backbone)
+# arch -> (class, default optimizer for fine-tuning, default backbone lr)
 ARCHS = {
     "resnet18": {"cls": ResNet18Teacher, "opt": "sgd", "lr": 0.01},
     "convnext_tiny": {"cls": ConvNextTinyTeacher, "opt": "adamw", "lr": 1e-4},
@@ -93,27 +93,27 @@ ARCHS = {
 
 
 def build_classifier(arch, num_classes, pretrained=True, freeze_backbone=False):
-    """Instancia o wrapper de classificador para `arch`."""
+    """Instantiates the classifier wrapper for `arch`."""
     return ARCHS[arch]["cls"](num_classes, pretrained=pretrained,
                               freeze_backbone=freeze_backbone)
 
 
 def load_teacher(arch, num_classes, ckpt_path, device, strict=True):
-    """Instancia o wrapper e carrega um checkpoint do fine-tune (chave 'model'
-    ou state_dict cru).
+    """Instantiates the wrapper and loads a fine-tuning checkpoint ('model' key
+    or raw state_dict).
 
-    ``strict=False`` ignora divergências (ex.: cabeça classificadora não usada
-    em metric learning), carregando apenas o backbone/embedding.
+    ``strict=False`` ignores mismatches (e.g. classifier head not used in
+    metric learning), loading only the backbone/embedding.
     """
     model = build_classifier(arch, num_classes, pretrained=False)
     blob = torch.load(ckpt_path, map_location=device)
     state = blob["model"] if isinstance(blob, dict) and "model" in blob else blob
     if not strict:
-        # strict=False do PyTorch ignora apenas chaves faltando/sobrando, NÃO
-        # divergências de shape de uma chave presente nos dois lados. A cabeça
-        # classificadora (m.fc / classifier[2]) muda de nº de classes entre
-        # datasets e não é usada em metric learning, então descartamos qualquer
-        # param com shape incompatível e carregamos só o backbone/embedding.
+        # PyTorch's strict=False only ignores missing/extra keys, NOT shape
+        # mismatches of a key present on both sides. The classifier head
+        # (m.fc / classifier[2]) changes number of classes between datasets and
+        # is not used in metric learning, so we discard any param with an
+        # incompatible shape and load only the backbone/embedding.
         msd = model.state_dict()
         state = {k: v for k, v in state.items()
                  if k in msd and v.shape == msd[k].shape}

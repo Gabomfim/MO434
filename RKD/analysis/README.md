@@ -40,5 +40,5 @@ profile tie rate 3.4% → 32.1%; collisions ≈ 0 for both.
 
 ## Notes
 - Figures are written to `figures/*.pdf` (paper-ready).
-- Notebooks degrade gracefully before runs exist (print "sem runs ainda"); the
+- Notebooks degrade gracefully before runs exist (print "no runs yet"); the
   probe (H3 mechanism) works with zero training.

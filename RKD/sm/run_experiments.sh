@@ -1,38 +1,38 @@
 #!/usr/bin/env bash
 # ============================================================================
-# RODAR OS EXPERIMENTOS Graph-RKD numa GPU — UM COMANDO. Resumível.
+# RUN THE Graph-RKD EXPERIMENTS on a GPU — ONE COMMAND. Resumable.
 #
-# Campanha ENXUTA (--trimmed): teachers + fases 2,3,4,5. Loga no W&B
-# gabomfim-unicamp/graph-rkd. Os datasets baixam sozinhos do S3 público (sem
-# credenciais AWS) e ficam em cache. Usa a GPU ao MÁXIMO (empacota vários jobs
-# por GPU pela VRAM livre; round-robin entre GPUs).
+# LEAN campaign (--trimmed): teachers + phases 2,3,4,5. Logs to W&B
+# gabomfim-unicamp/graph-rkd. The datasets download themselves from the public S3 (no
+# AWS credentials) and are cached. Uses the GPU to the MAXIMUM (packs several jobs
+# per GPU by free VRAM; round-robin across GPUs).
 #
-# Pré-requisitos (ver RUNBOOK.md):
+# Prerequisites (see RUNBOOK.md):
 #   uv sync
-#   export WANDB_API_KEY=...      # ou: uv run wandb login
+#   export WANDB_API_KEY=...      # or: uv run wandb login
 #
-# Uso:
-#   ./sm/run_experiments.sh                      # campanha enxuta inteira (~2-3 dias)
-#   PHASES="teachers phase2 phase3 phase4" ./sm/run_experiments.sh   # só a busca
-#   PHASES="phase5" ./sm/run_experiments.sh      # só o headline
-#   MAX_PARALLEL=3 ./sm/run_experiments.sh       # fixar nº de jobs simultâneos
-#   PER_JOB_GB=3 ./sm/run_experiments.sh         # ajustar VRAM/job do auto
+# Usage:
+#   ./sm/run_experiments.sh                      # the whole lean campaign (~2-3 days)
+#   PHASES="teachers phase2 phase3 phase4" ./sm/run_experiments.sh   # only the search
+#   PHASES="phase5" ./sm/run_experiments.sh      # only the headline
+#   MAX_PARALLEL=3 ./sm/run_experiments.sh       # fix the number of simultaneous jobs
+#   PER_JOB_GB=3 ./sm/run_experiments.sh         # adjust the auto's VRAM/job
 # ============================================================================
 set -euo pipefail
 
 PHASES="${PHASES:-teachers phase2 phase3 phase4 phase5}"
-MAX_PARALLEL="${MAX_PARALLEL:-0}"     # 0 = auto pela VRAM (100% da GPU)
+MAX_PARALLEL="${MAX_PARALLEL:-0}"     # 0 = auto by VRAM (100% of the GPU)
 PER_JOB_GB="${PER_JOB_GB:-4.0}"
-: "${WANDB_API_KEY:?defina WANDB_API_KEY (ou rode 'uv run wandb login') — ver RUNBOOK.md}"
+: "${WANDB_API_KEY:?set WANDB_API_KEY (or run 'uv run wandb login') — see RUNBOOK.md}"
 
 cd "$(dirname "$0")/.."   # -> RKD/
 
-# checagem de GPU (o treino de imagens em CPU é inviável)
+# GPU check (training images on CPU is unfeasible)
 uv run --no-sync python -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" \
-  || { echo 'ERRO: nenhuma GPU CUDA visível. Rode numa máquina com GPU (ver RUNBOOK.md).'; exit 1; }
+  || { echo 'ERROR: no CUDA GPU visible. Run on a machine with a GPU (see RUNBOOK.md).'; exit 1; }
 
-echo ">> Campanha ENXUTA | fases: [$PHASES] | paralelismo: $MAX_PARALLEL (0=auto)"
-echo ">> W&B: https://wandb.ai/gabomfim-unicamp/graph-rkd  (resumível: re-rode este comando)"
+echo ">> LEAN campaign | phases: [$PHASES] | parallelism: $MAX_PARALLEL (0=auto)"
+echo ">> W&B: https://wandb.ai/gabomfim-unicamp/graph-rkd  (resumable: re-run this command)"
 exec uv run --no-sync python sm/run_local.py --trimmed --phases $PHASES \
     --max-parallel "$MAX_PARALLEL" --per-job-gb "$PER_JOB_GB" \
     --wandb-entity gabomfim-unicamp --wandb-project graph-rkd

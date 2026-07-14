@@ -1,21 +1,21 @@
-"""Sonda OFFLINE de fidelidade/estabilidade dos descritores de grafo (§6/§7.3).
+"""OFFLINE probe of graph descriptor fidelity/stability (§6/§7.3).
 
-Não precisa de modelo treinado nem de dados: gera grafos aleatórios (configurações
-de pontos -> matrizes de distância), computa os descritores ``profile`` e ``mds``
-sob cada esquema de normalização e mede, por ordem N:
+Needs neither a trained model nor data: generates random graphs (point
+configurations -> distance matrices), computes the ``profile`` and ``mds`` descriptors
+under each normalization scheme and measures, per order N:
 
-  * COLISÃO (fidelidade): fração de pares de grafos ESTRUTURALMENTE DISTINTOS cujos
-    descritores ficam ε-próximos. Alto = descritor perde informação (profile perde
-    correspondência de nós; mds sofre com cospectralidade). Evidência de H3.
-  * MDS near-degenerate: fração de espectros com gap mínimo entre autovalores
-    consecutivos < ε·(faixa) — instabilidade numérica do mds.
-  * Profile tie rate: fração de arestas adjacentes (dentro do perfil de um nó)
-    empatadas a menos de ε — churn de ordenação do profile.
+  * COLLISION (fidelity): fraction of pairs of STRUCTURALLY DISTINCT graphs whose
+    descriptors are ε-close. High = descriptor loses information (profile loses
+    node correspondence; mds suffers from cospectrality). Evidence for H3.
+  * MDS near-degenerate: fraction of spectra with minimum gap between consecutive
+    eigenvalues < ε·(range) — numerical instability of mds.
+  * Profile tie rate: fraction of adjacent edges (within a node's profile)
+    tied within ε — ordering churn of the profile.
 
-Distâncias estruturais e de descritor são normalizadas pela mediana p/ tornar os
-limiares ε relativos e comparáveis entre N e esquemas. Escreve um CSV.
+Structural and descriptor distances are normalized by the median to make the
+ε thresholds relative and comparable across N and schemes. Writes a CSV.
 
-Uso: python analysis/descriptor_probe.py [--n-graphs 2000] [--out descriptor_probe.csv]
+Usage: python analysis/descriptor_probe.py [--n-graphs 2000] [--out descriptor_probe.csv]
 """
 
 import argparse
@@ -37,7 +37,7 @@ METHODS = ("profile", "mds")
 
 
 def random_node_embeddings(g, n, dim=32, seed=0):
-    """(g, n, dim) configurações de pontos aleatórias -> grafos completos distintos."""
+    """(g, n, dim) random point configurations -> distinct complete graphs."""
     gen = torch.Generator().manual_seed(seed)
     return torch.randn(g, n, dim, generator=gen)
 
@@ -50,7 +50,7 @@ def _descriptor(node_emb, method, norm):
 
 
 def _pdist_flat(x, max_pairs=40000, seed=0):
-    """Distâncias par-a-par (subamostradas) de um tensor (G, D)."""
+    """Pairwise distances (subsampled) of a tensor (G, D)."""
     G = x.shape[0]
     pairs = list(itertools.combinations(range(G), 2))
     gen = torch.Generator().manual_seed(seed)
@@ -63,11 +63,11 @@ def _pdist_flat(x, max_pairs=40000, seed=0):
 
 
 def structural_distance(node_emb, ij):
-    """Distância estrutural permutação-invariante entre grafos: ||perfis ordenados||.
+    """Permutation-invariant structural distance between graphs: ||sorted profiles||.
 
-    Usa o multiconjunto ORDENADO de arestas (todas as off-diagonais ordenadas) —
-    invariante a permutação e independente do descritor testado, então serve de
-    referência p/ dizer se dois grafos são de fato distintos."""
+    Uses the SORTED multiset of edges (all off-diagonals sorted) —
+    permutation-invariant and independent of the descriptor tested, so it serves as a
+    reference to tell whether two graphs are in fact distinct."""
     D = pairwise_distance_matrix(node_emb)                    # (G,N,N)
     N = D.shape[-1]
     mask = ~torch.eye(N, dtype=torch.bool)
@@ -77,9 +77,9 @@ def structural_distance(node_emb, ij):
 
 
 def collision_rate(desc, node_emb, ij, eps_desc=0.05, delta_struct=0.20):
-    """Fração de pares estruturalmente distintos (struct > delta·mediana) cujos
-    descritores colidem (desc < eps·mediana)."""
-    # distâncias de descritor nos MESMOS pares ij usados na struct
+    """Fraction of structurally distinct pairs (struct > delta·median) whose
+    descriptors collide (desc < eps·median)."""
+    # descriptor distances on the SAME ij pairs used in struct
     dd = (desc[ij[:, 0]] - desc[ij[:, 1]]).norm(dim=-1)
     sd = structural_distance(node_emb, ij)
     dd_med = dd.median().clamp_min(1e-9)
@@ -119,7 +119,7 @@ def run(n_graphs, out, n_list=(3, 4, 8, 16, 17), dim=32, seed=0):
     rows = []
     for N in n_list:
         node_emb = random_node_embeddings(n_graphs, N, dim=dim, seed=seed + N)
-        _, ij = _pdist_flat(torch.zeros(n_graphs, 1), seed=seed)  # pares fixos por N
+        _, ij = _pdist_flat(torch.zeros(n_graphs, 1), seed=seed)  # fixed pairs per N
         prof_tie = profile_tie_rate(node_emb)
         for norm in NORMS:
             mds_deg = mds_degeneracy(node_emb, norm)
@@ -140,7 +140,7 @@ def run(n_graphs, out, n_list=(3, 4, 8, 16, 17), dim=32, seed=0):
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
-    print(f"\n-> {len(rows)} linhas escritas em {out}")
+    print(f"\n-> {len(rows)} rows written to {out}")
     return rows
 
 

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================================
-# OPÇÃO B — rodar os experimentos no AWS SageMaker (jobs em PARALELO).
-# Loga no W&B gabomfim-unicamp/graph-rkd.
+# OPTION B — run the experiments on AWS SageMaker (jobs in PARALLEL).
+# Logs to W&B gabomfim-unicamp/graph-rkd.
 #
-# Pré-requisitos:
-#   1) cota g5.xlarge de TREINO aprovada (pendente — ver status da campanha)
-#   2) role de execução do SageMaker  -> export ROLE_ARN=arn:aws:iam::...:role/...
-#   3) dados no S3:  aws s3 sync data/ s3://graph-rkd-832271495954/graph-rkd/data/
+# Prerequisites:
+#   1) approved g5.xlarge TRAINING quota (pending — see campaign status)
+#   2) SageMaker execution role  -> export ROLE_ARN=arn:aws:iam::...:role/...
+#   3) data on S3:  aws s3 sync data/ s3://graph-rkd-832271495954/graph-rkd/data/
 #   4) pip install sagemaker boto3   +   export WANDB_API_KEY=...
 #
-# Por padrão faz DRY-RUN (não cria nada). Para lançar de verdade: LAUNCH=1
+# By default it does a DRY-RUN (creates nothing). To launch for real: LAUNCH=1
 #
-# Uso:
-#   ROLE_ARN=... ./sm/run_sagemaker.sh                 # dry-run do gate
-#   LAUNCH=1 ROLE_ARN=... ./sm/run_sagemaker.sh        # cria os jobs
+# Usage:
+#   ROLE_ARN=... ./sm/run_sagemaker.sh                 # dry-run of the gate
+#   LAUNCH=1 ROLE_ARN=... ./sm/run_sagemaker.sh        # creates the jobs
 #   PHASES="phase5" LAUNCH=1 ROLE_ARN=... ./sm/run_sagemaker.sh
 # ============================================================================
 set -euo pipefail
@@ -22,12 +22,12 @@ REGION="${REGION:-us-east-1}"
 BUCKET="${BUCKET:-graph-rkd-832271495954}"
 DATA_S3="${DATA_S3:-s3://graph-rkd-832271495954/graph-rkd/data/}"
 PHASES="${PHASES:-teachers phase0 phase1}"
-: "${ROLE_ARN:?defina ROLE_ARN (role de execução do SageMaker)}"
+: "${ROLE_ARN:?set ROLE_ARN (SageMaker execution role)}"
 
 LAUNCH_FLAG=""
 if [ "${LAUNCH:-0}" = "1" ]; then
     LAUNCH_FLAG="--launch"
-    : "${WANDB_API_KEY:?defina WANDB_API_KEY (necessário p/ --launch)}"
+    : "${WANDB_API_KEY:?set WANDB_API_KEY (required for --launch)}"
 fi
 
 cd "$(dirname "$0")/.."   # -> RKD/

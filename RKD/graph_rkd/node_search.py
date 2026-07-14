@@ -1,27 +1,27 @@
-"""Graph-RKD: escolha do número de nós N por busca binária + análise combinatória.
+"""Graph-RKD: choosing the number of nodes N via binary search + combinatorial analysis.
 
-Contexto do método (RKD generalizado): cada nó é um objeto (amostra do batch) e
-cada aresta é a distância entre os embeddings de dois objetos. O grafo é completo
-e não-direcionado, e seu embedding é **invariante a permutação** — se o grafo é o
-mesmo (mesmo conjunto de nós), o embedding é o mesmo. Logo um grafo é definido por
-um *conjunto* de N nós, não por uma tupla ordenada.
+Method context (generalized RKD): each node is an object (a batch sample) and
+each edge is the distance between the embeddings of two objects. The graph is
+complete and undirected, and its embedding is **permutation-invariant** — if the
+graph is the same (same set of nodes), the embedding is the same. Hence a graph
+is defined by a *set* of N nodes, not by an ordered tuple.
 
-Este módulo cobre dois pedidos:
+This module covers two requests:
 
-1. ``find_best_n`` — busca binária pelo MAIOR N viável para um dado tamanho de
-   batch, sob uma restrição monotônica (orçamento de compute/memória, ou uma
-   medição real injetada). Assume-se que a qualidade cresce com N (logo, dentro
-   do orçamento, "maior é melhor"); a busca binária acha a fronteira de
-   viabilidade em O(log B) avaliações.
-2. ``unique_graphs`` / ``plot_unique_graphs`` — contagem de grafos únicos
-   C(B, N) e comparação com as N-tuplas ordenadas P(B, N) do RKD tradicional.
+1. ``find_best_n`` — binary search for the LARGEST feasible N for a given batch
+   size, under a monotonic constraint (compute/memory budget, or an injected
+   real measurement). Quality is assumed to grow with N (so, within the
+   budget, "larger is better"); the binary search finds the feasibility
+   frontier in O(log B) evaluations.
+2. ``unique_graphs`` / ``plot_unique_graphs`` — count of unique graphs
+   C(B, N) and comparison with the ordered N-tuples P(B, N) of traditional RKD.
 
-Notas honestas:
-* C(B, N) NÃO é "não-exponencial": é combinatória e tem pico em N=B/2. A vantagem
-  da invariância a permutação é o fator N! (P(B,N) = N! · C(B,N)) e o fato de o
-  custo POR PASSO ser controlável quando se amostra um nº fixo de grafos.
-* Busca binária exige predicado monotônico; por isso ela busca o maior N sob
-  restrição, e usamos um custo suave (estritamente crescente em N).
+Honest notes:
+* C(B, N) is NOT "non-exponential": it is combinatorial and peaks at N=B/2. The
+  advantage of permutation invariance is the N! factor (P(B,N) = N! · C(B,N)) and
+  the fact that the PER-STEP cost is controllable when a fixed number of graphs is sampled.
+* Binary search requires a monotonic predicate; that is why it searches for the largest N under
+  a constraint, and we use a smooth cost (strictly increasing in N).
 """
 
 import math
@@ -36,42 +36,42 @@ __all__ = [
 
 
 # --------------------------------------------------------------------------- #
-# Combinatória                                                                #
+# Combinatorics                                                                #
 # --------------------------------------------------------------------------- #
 def unique_graphs(B: int, N: int) -> int:
-    """Nº de grafos completos DISTINTOS de N nós a partir de um batch de B
-    amostras = C(B, N) (a ordem dos nós/arestas não importa)."""
+    """Number of DISTINCT complete graphs of N nodes from a batch of B
+    samples = C(B, N) (node/edge order does not matter)."""
     if N < 0 or N > B:
         return 0
     return math.comb(B, N)
 
 
 def ordered_tuples(B: int, N: int) -> int:
-    """Nº de N-tuplas ORDENADAS (relação N-ária do RKD tradicional)
-    = B!/(B-N)! = P(B, N). Vale: P(B,N) == N! * C(B,N)."""
+    """Number of ORDERED N-tuples (N-ary relation of traditional RKD)
+    = B!/(B-N)! = P(B, N). It holds that: P(B,N) == N! * C(B,N)."""
     if N < 0 or N > B:
         return 0
     return math.perm(B, N)
 
 
 def permutation_reduction(N: int) -> int:
-    """Fator de redução set-vs-tupla = N! (quantas ordenações colapsam em 1 grafo)."""
+    """Set-vs-tuple reduction factor = N! (how many orderings collapse into 1 graph)."""
     return math.factorial(N)
 
 
 def adaptive_num_graphs(batch_size: int, n_nodes: int, alpha: float = 0.5,
                         g_min: Optional[int] = None,
                         g_max: Optional[int] = None) -> int:
-    """Nº de grafos a amostrar que CRESCE com a linha do triângulo de Pascal.
+    """Number of graphs to sample that GROWS with the Pascal's triangle row.
 
-    O valor da linha C(K, N) é gigante (até ~1e37), então escalamos com
-    ``log2(C(K,N))`` — o *description length* (bits para especificar um grafo) do
-    espaço de grafos. É limitado, cresce com a linha e tem pico em N = K/2:
+    The row value C(K, N) is huge (up to ~1e37), so we scale with
+    ``log2(C(K,N))`` — the *description length* (bits to specify one graph) of the
+    graph space. It is bounded, grows with the row and peaks at N = K/2:
 
         G(N) = clamp( round(alpha · log2 C(K,N)) , g_min , g_max )
 
-    g_min default = ⌊K/N⌋ (pelo menos uma partição completa do batch), garantindo
-    cobertura ≥ ``partition``. ``g_max`` limita o custo (None = sem teto).
+    g_min default = ⌊K/N⌋ (at least one full partition of the batch), ensuring
+    coverage ≥ ``partition``. ``g_max`` bounds the cost (None = no cap).
     """
     if g_min is None:
         g_min = max(1, batch_size // n_nodes)
@@ -83,37 +83,37 @@ def adaptive_num_graphs(batch_size: int, n_nodes: int, alpha: float = 0.5,
 
 
 # --------------------------------------------------------------------------- #
-# Modelo de custo por passo                                                   #
+# Per-step cost model                                                          #
 # --------------------------------------------------------------------------- #
 def step_edge_cost(B: int, N: int, scheme: str = "partition",
                    graphs_per_step: int = 1) -> float:
-    """Custo de um passo em nº de arestas processadas (proxy de compute/memória).
+    """Cost of one step in number of edges processed (proxy for compute/memory).
 
-    * ``partition``: cada amostra do batch é usada UMA vez -> ~B/N grafos
-      disjuntos de N nós. Custo = (B/N)·C(N,2) = B·(N-1)/2 (exato quando N|B;
-      estritamente crescente em N -> predicado monotônico, seguro p/ busca
-      binária). Dá a regra elegante N*·B ≈ const.
-    * ``sample``: ``graphs_per_step`` grafos de N nós -> G·C(N,2) = G·N(N-1)/2
-      (independe de B).
+    * ``partition``: each batch sample is used ONCE -> ~B/N disjoint
+      graphs of N nodes. Cost = (B/N)·C(N,2) = B·(N-1)/2 (exact when N|B;
+      strictly increasing in N -> monotonic predicate, safe for binary
+      search). Gives the elegant rule N*·B ≈ const.
+    * ``sample``: ``graphs_per_step`` graphs of N nodes -> G·C(N,2) = G·N(N-1)/2
+      (independent of B).
     """
     if N < 2 or N > B:
         return float("inf")
     if scheme == "partition":
-        return B * (N - 1) / 2.0           # = (B/N) * C(N,2), exato p/ N|B
+        return B * (N - 1) / 2.0           # = (B/N) * C(N,2), exact for N|B
     if scheme == "sample":
         return graphs_per_step * N * (N - 1) / 2.0
-    raise ValueError("scheme deve ser 'partition' ou 'sample'")
+    raise ValueError("scheme must be 'partition' or 'sample'")
 
 
 # --------------------------------------------------------------------------- #
-# Busca binária                                                               #
+# Binary search                                                               #
 # --------------------------------------------------------------------------- #
 def largest_feasible_n(predicate: Callable[[int], bool],
                        lo: int = 2, hi: int = 128) -> Optional[int]:
-    """Maior N em [lo, hi] com ``predicate(N)`` True, assumindo predicado
-    monotônico (True...True False...False). O(log(hi-lo)) avaliações.
+    """Largest N in [lo, hi] with ``predicate(N)`` True, assuming a monotonic
+    predicate (True...True False...False). O(log(hi-lo)) evaluations.
 
-    Retorna None se nem ``lo`` é viável.
+    Returns None if not even ``lo`` is feasible.
     """
     if not predicate(lo):
         return None
@@ -131,11 +131,11 @@ def find_best_n(batch_size: int, edge_budget: float, scheme: str = "partition",
                 graphs_per_step: int = 1, n_min: int = 2,
                 n_max: Optional[int] = None,
                 feasible_fn: Optional[Callable[[int], bool]] = None) -> Optional[int]:
-    """Busca binária pelo melhor (= maior viável) N para ``batch_size``.
+    """Binary search for the best (= largest feasible) N for ``batch_size``.
 
-    Use ``feasible_fn`` para injetar uma medição REAL (ex.: roda 1 passo de
-    treino com N nós e devolve memória < limite / sem OOM / tempo < limite).
-    Sem ela, usa o modelo de custo (``edge_budget``).
+    Use ``feasible_fn`` to inject a REAL measurement (e.g.: runs 1 training
+    step with N nodes and returns memory < limit / no OOM / time < limit).
+    Without it, uses the cost model (``edge_budget``).
     """
     n_max = n_max or batch_size
     if feasible_fn is None:
@@ -145,11 +145,11 @@ def find_best_n(batch_size: int, edge_budget: float, scheme: str = "partition",
 
 
 def log_spaced_orders(n_min: int, n_max: int, base: int = 2):
-    """Candidatos de N espaçados em log (geométricos) em [n_min, n_max].
+    """Log-spaced (geometric) N candidates in [n_min, n_max].
 
-    Ex.: n_min=2, n_max=17 -> [2, 4, 8, 16, 17]. São ~log_base(n_max) pontos
-    (mesmo orçamento da busca binária), mas revelam a FORMA da curva qualidade-N
-    e não assumem monotonicidade.
+    E.g.: n_min=2, n_max=17 -> [2, 4, 8, 16, 17]. They are ~log_base(n_max) points
+    (same budget as binary search), but reveal the SHAPE of the quality-N curve
+    and do not assume monotonicity.
     """
     if n_max < n_min:
         return []
@@ -162,19 +162,19 @@ def log_spaced_orders(n_min: int, n_max: int, base: int = 2):
 
 
 def select_order(orders, means, sems=None, rule: str = "argmax") -> int:
-    """Escolhe N a partir das qualidades medidas (top-1 de validação).
+    """Chooses N from the measured qualities (validation top-1).
 
-    ``argmax``: N com a maior média.
-    ``1se``   : menor N cuja média esteja a até 1 erro-padrão do melhor
-                (regra do 1-erro-padrão: parcimônia — N menor é mais barato —
-                sem perda estatisticamente significativa). Requer ``sems`` e
-                ``orders`` em ordem crescente.
+    ``argmax``: N with the highest mean.
+    ``1se``   : smallest N whose mean is within 1 standard error of the best
+                (one-standard-error rule: parsimony — smaller N is cheaper —
+                with no statistically significant loss). Requires ``sems`` and
+                ``orders`` in increasing order.
     """
     best_i = max(range(len(orders)), key=lambda i: means[i])
     if rule == "argmax" or sems is None:
         return int(orders[best_i])
     threshold = means[best_i] - sems[best_i]
-    for i in range(len(orders)):            # orders crescente -> menor N elegível
+    for i in range(len(orders)):            # orders increasing -> smallest eligible N
         if means[i] >= threshold:
             return int(orders[i])
     return int(orders[best_i])
@@ -182,11 +182,11 @@ def select_order(orders, means, sems=None, rule: str = "argmax") -> int:
 
 def find_knee_n(quality_fn: Callable[[int], float], lo: int = 2, hi: int = 128,
                 rel_tol: float = 0.01) -> int:
-    """Variante para quando há RETORNOS DECRESCENTES (não "∝ N" puro).
+    """Variant for when there are DIMINISHING RETURNS (not pure "∝ N").
 
-    Busca binária pelo maior N cujo ganho relativo de qualidade ao DOBRAR N
-    (de N/2 para N) ainda supera ``rel_tol``. ``quality_fn(N)`` deve ser uma
-    medição real (ex.: recall/top-1 do student destilado com grafos de N nós).
+    Binary search for the largest N whose relative quality gain when DOUBLING N
+    (from N/2 to N) still exceeds ``rel_tol``. ``quality_fn(N)`` must be a
+    real measurement (e.g.: recall/top-1 of the student distilled with graphs of N nodes).
     """
     def worth_it(N):
         half = max(lo, N // 2)
@@ -201,27 +201,27 @@ def find_knee_n(quality_fn: Callable[[int], float], lo: int = 2, hi: int = 128,
 
 
 # --------------------------------------------------------------------------- #
-# Regra de escala empírica                                                    #
+# Empirical scaling rule                                                       #
 # --------------------------------------------------------------------------- #
 def derive_scaling_rule(batch_sizes, edge_budget: float, scheme: str = "partition",
                         graphs_per_step: int = 1) -> dict:
-    """Roda ``find_best_n`` para vários batches e ajusta a forma analítica.
+    """Runs ``find_best_n`` for several batches and fits the analytic form.
 
-    O custo da partição é E = B·(N-1)/2, logo o melhor N viável é AFIM em 1/B:
+    The partition cost is E = B·(N-1)/2, so the best feasible N is AFFINE in 1/B:
 
-        N*(B) ≈ a·(1/B) + b ,   com   a = 2E ,  b = 1.
+        N*(B) ≈ a·(1/B) + b ,   with   a = 2E ,  b = 1.
 
-    Ajustamos N* = a·(1/B) + b por mínimos quadrados (não lei de potência — o
-    termo "+1" da partição enviesaria um ajuste log-log). Para ``sample`` o N*
-    independe de B (N* ≈ sqrt(2E/G)).
+    We fit N* = a·(1/B) + b by least squares (not a power law — the
+    "+1" partition term would bias a log-log fit). For ``sample`` the N*
+    is independent of B (N* ≈ sqrt(2E/G)).
     """
     import numpy as np
 
     best = [find_best_n(B, edge_budget, scheme, graphs_per_step) for B in batch_sizes]
     Barr = np.array(batch_sizes, dtype=float)
     Narr = np.array([n if n else float("nan") for n in best], dtype=float)
-    # Só o regime limitado pelo ORÇAMENTO é informativo: descarta pontos
-    # "clampados" pelo teto N<=B (batches pequenos), que enviesam o ajuste.
+    # Only the BUDGET-limited regime is informative: discard points
+    # "clamped" by the ceiling N<=B (small batches), which bias the fit.
     clamped = np.array([(n is not None) and (n >= B) for n, B in zip(best, batch_sizes)])
     mask = np.isfinite(Narr) & (Narr > 0) & (~clamped)
     if mask.sum() < 2:
@@ -231,13 +231,13 @@ def derive_scaling_rule(batch_sizes, edge_budget: float, scheme: str = "partitio
            "edge_budget": edge_budget, "scheme": scheme}
 
     if scheme == "sample":
-        out["analytic_rule"] = "N* ≈ sqrt(2·E/G) = %.3g (independe de B)" % (
+        out["analytic_rule"] = "N* ≈ sqrt(2·E/G) = %.3g (independent of B)" % (
             math.sqrt(2 * edge_budget / max(1, graphs_per_step)))
-        out["fitted_rule"] = "N* ≈ %.3g (mediana, ~constante)" % float(
+        out["fitted_rule"] = "N* ≈ %.3g (median, ~constant)" % float(
             np.median(Narr[mask]))
         return out
 
-    # afim em 1/B
+    # affine in 1/B
     inv = 1.0 / Barr[mask]
     a, b = np.polyfit(inv, Narr[mask], 1)            # N ≈ a*(1/B) + b
     pred = a * (1.0 / Barr[mask]) + b
@@ -255,10 +255,10 @@ def derive_scaling_rule(batch_sizes, edge_budget: float, scheme: str = "partitio
 
 
 # --------------------------------------------------------------------------- #
-# Gráfico                                                                     #
+# Plot                                                                        #
 # --------------------------------------------------------------------------- #
 def plot_unique_graphs(B: int = 128, path: str = "unique_graphs_128.png") -> str:
-    """Plota o nº de grafos únicos C(B, N) vs N (e P(B, N) p/ comparação)."""
+    """Plots the number of unique graphs C(B, N) vs N (and P(B, N) for comparison)."""
     import numpy as np
     import matplotlib
     matplotlib.use("Agg")
@@ -271,16 +271,16 @@ def plot_unique_graphs(B: int = 128, path: str = "unique_graphs_128.png") -> str
 
     fig, ax = plt.subplots(figsize=(9.5, 5.8))
     ax.semilogy(Ns, np.where(sets > 0, sets, np.nan), color="#2b6cb0", lw=2,
-                label=r"grafos únicos = $\binom{%d}{N}$  (sets — método novo)" % B)
+                label=r"unique graphs = $\binom{%d}{N}$  (sets — new method)" % B)
     ax.semilogy(Ns, np.where(tups > 0, tups, np.nan), "--", color="#c05621", lw=1.6,
-                label=r"$N$-tuplas ordenadas = $P(%d,N)$  (RKD tradicional)" % B)
+                label=r"ordered $N$-tuples = $P(%d,N)$  (traditional RKD)" % B)
     ax.axvline(peak, color="gray", ls=":", lw=1)
-    ax.annotate(r"pico em $N=%d$" % peak + "\n" + r"$\binom{%d}{%d}\approx%.2e$" % (B, peak, sets[peak]),
+    ax.annotate(r"peak at $N=%d$" % peak + "\n" + r"$\binom{%d}{%d}\approx%.2e$" % (B, peak, sets[peak]),
                 xy=(peak, sets[peak]), xytext=(peak + 4, sets[peak] / 1e6),
                 fontsize=9, arrowprops=dict(arrowstyle="->", color="gray"))
-    ax.set_xlabel("N (nós por grafo)")
-    ax.set_ylabel("nº de grafos / tuplas  (escala log)")
-    ax.set_title("Grafos únicos vs N-tuplas ordenadas — batch de %d amostras" % B)
+    ax.set_xlabel("N (nodes per graph)")
+    ax.set_ylabel("number of graphs / tuples  (log scale)")
+    ax.set_title("Unique graphs vs ordered N-tuples — batch of %d samples" % B)
     ax.legend(loc="lower center")
     ax.grid(True, which="both", ls=":", alpha=0.4)
     fig.tight_layout()
@@ -291,24 +291,24 @@ def plot_unique_graphs(B: int = 128, path: str = "unique_graphs_128.png") -> str
 
 if __name__ == "__main__":
     B = 128
-    print("=== Contagem para batch de %d (alguns N) ===" % B)
-    print(" N | grafos únicos C(B,N) | tuplas ordenadas P(B,N) | reducao N!")
+    print("=== Count for batch of %d (some N) ===" % B)
+    print(" N | unique graphs C(B,N) | ordered tuples P(B,N) | reduction N!")
     for n in (2, 3, 4, 8, 16, 32, 64, 128):
         print("%3d | %22d | %24d | %d!" % (
             n, unique_graphs(B, n), ordered_tuples(B, n), n))
 
-    print("\n=== Busca binária do melhor N (scheme=partition) ===")
+    print("\n=== Binary search for the best N (scheme=partition) ===")
     for budget in (256, 1024, 4096):
         n = find_best_n(B, edge_budget=budget, scheme="partition")
-        print("batch=%d  orcamento=%5d arestas/passo -> melhor N = %s" % (B, budget, n))
+        print("batch=%d  budget=%5d edges/step -> best N = %s" % (B, budget, n))
 
-    print("\n=== Regra de escala (varios batches, orcamento fixo) ===")
+    print("\n=== Scaling rule (several batches, fixed budget) ===")
     rule = derive_scaling_rule([32, 64, 128, 256, 512, 1024, 2048],
                                edge_budget=1024, scheme="partition")
-    print("N* por batch:", dict(zip(rule["batch_sizes"], rule["best_N"])))
-    print("ajuste empirico:", rule["fitted_rule"], "(R^2=%.4f, resid max=%.2g)"
+    print("N* per batch:", dict(zip(rule["batch_sizes"], rule["best_N"])))
+    print("empirical fit:", rule["fitted_rule"], "(R^2=%.4f, max resid=%.2g)"
           % (rule["fit_r2"], rule["max_abs_residual"]))
-    print("esperado analitico:", rule["analytic_rule"])
+    print("analytic expected:", rule["analytic_rule"])
 
     out = plot_unique_graphs(B, path="graph_rkd/unique_graphs_128.png")
-    print("\ngrafico salvo em:", out)
+    print("\nplot saved to:", out)

@@ -1,9 +1,10 @@
-"""Baseline de METRIC LEARNING: treina a ConvNextMicro (embedding) do zero só com
-triplet loss em Cars/CUB (split disjunto), recall@K. Sem teacher.
+"""METRIC LEARNING baseline: trains ConvNextMicro (embedding) from scratch using
+only triplet loss on Cars/CUB (disjoint split), recall@K. No teacher.
 
-Serve de comparação para a destilação métrica (distill_metric.py): mesma
-arquitetura, dataset, split, política de val/seleção e otimização — a diferença
-é a ausência do sinal de destilação. Seleção pelo melhor recall@1 de validação.
+Serves as a comparison for the metric distillation (distill_metric.py): same
+architecture, dataset, split, val/selection policy and optimization — the
+difference is the absence of the distillation signal. Selection by the best
+validation recall@1.
 """
 
 import argparse

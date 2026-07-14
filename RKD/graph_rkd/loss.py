@@ -1,17 +1,17 @@
-"""Perda de destilação Graph-RKD.
+"""Graph-RKD distillation loss.
 
-Generaliza o RKD relacional: em vez de casar distâncias entre pares (RKD-D) ou
-ângulos entre trios (RKD-A), casa o **embedding do grafo inteiro** de N nós entre
-teacher e student. Para cada grafo (conjunto de N índices do batch):
+Generalizes relational RKD: instead of matching distances between pairs (RKD-D) or
+angles between triples (RKD-A), it matches the **whole-graph embedding** of N nodes between
+teacher and student. For each graph (set of N batch indices):
 
     D_s = dist(student[idx]) ;  g_s = embed(D_s)
-    D_t = dist(teacher[idx]) ;  g_t = embed(D_t)        (teacher sem gradiente)
-    perda += || g_s - g_t ||_p
+    D_t = dist(teacher[idx]) ;  g_t = embed(D_t)        (teacher without gradient)
+    loss += || g_s - g_t ||_p
 
-O mesmo conjunto de índices é usado nos dois lados, então os grafos
-correspondem; a invariância a permutação garante que o embedding represente o
-*conjunto*, não a ordem (é o que permite usar sets e cortar o fator N! das
-tuplas). N vem da busca binária (ver node_search.find_best_n).
+The same set of indices is used on both sides, so the graphs
+correspond; permutation invariance guarantees that the embedding represents the
+*set*, not the order (which is what allows using sets and cutting the N! factor of the
+tuples). N comes from the binary search (see node_search.find_best_n).
 """
 
 import torch
@@ -25,14 +25,14 @@ __all__ = ["GraphRKDLoss", "sample_graphs", "norm_flags"]
 
 
 def norm_flags(norm):
-    """Esquema de normalização -> (per_graph_normalize, usa_μ_batch, zscore).
+    """Normalization scheme -> (per_graph_normalize, uses_μ_batch, zscore).
 
-    Mapeia o eixo ``norm`` (EXPERIMENTS_EN §5 / H2) para os flags concretos que
-    ``embed_graphs`` e o z-score do descritor consomem. Compartilhado entre a
-    perda de regressão e a contrastiva.
+    Maps the ``norm`` axis (EXPERIMENTS_EN §5 / H2) to the concrete flags that
+    ``embed_graphs`` and the descriptor z-score consume. Shared between the
+    regression loss and the contrastive one.
     """
     if norm not in NORM_SCHEMES:
-        raise ValueError("norm deve ser um de %s" % (NORM_SCHEMES,))
+        raise ValueError("norm must be one of %s" % (NORM_SCHEMES,))
     return {"per_graph": (True, False, False),
             "none": (False, False, False),
             "minibatch": (False, True, False),
@@ -41,19 +41,19 @@ def norm_flags(norm):
 
 def sample_graphs(batch_size, n_nodes, sampling="partition", graphs_per_step=None,
                   alpha=0.5, g_min=None, g_max=None, generator=None, device="cpu"):
-    """Gera índices de grafos (conjuntos de ``n_nodes`` nós) a partir do batch.
+    """Generates graph indices (sets of ``n_nodes`` nodes) from the batch.
 
-    * ``partition``: embaralha o batch e fatia em ⌊B/N⌋ grafos disjuntos
-      (cada amostra usada uma vez). Nº de grafos = ⌊B/N⌋.
-    * ``random``: ``graphs_per_step`` subconjuntos aleatórios de N nós.
-    * ``log``: nº de grafos ADAPTATIVO, crescendo com a linha do triângulo de
-      Pascal — ``adaptive_num_graphs(B, N, alpha, g_min, g_max)`` subconjuntos
-      aleatórios (recomendado; ver node_search.adaptive_num_graphs).
+    * ``partition``: shuffles the batch and slices into ⌊B/N⌋ disjoint graphs
+      (each sample used once). Number of graphs = ⌊B/N⌋.
+    * ``random``: ``graphs_per_step`` random subsets of N nodes.
+    * ``log``: ADAPTIVE number of graphs, growing with the Pascal's triangle
+      row — ``adaptive_num_graphs(B, N, alpha, g_min, g_max)`` random
+      subsets (recommended; see node_search.adaptive_num_graphs).
 
-    Retorna LongTensor ``(num_graphs, n_nodes)``.
+    Returns a LongTensor ``(num_graphs, n_nodes)``.
     """
     if n_nodes < 2 or n_nodes > batch_size:
-        raise ValueError("n_nodes deve estar em [2, batch_size]")
+        raise ValueError("n_nodes must be in [2, batch_size]")
     if sampling == "partition":
         perm = torch.randperm(batch_size, generator=generator, device=device)
         g = batch_size // n_nodes
@@ -66,25 +66,25 @@ def sample_graphs(batch_size, n_nodes, sampling="partition", graphs_per_step=Non
         idx = [torch.randperm(batch_size, generator=generator, device=device)[:n_nodes]
                for _ in range(g)]
         return torch.stack(idx, dim=0)
-    raise ValueError("sampling deve ser 'partition', 'random' ou 'log'")
+    raise ValueError("sampling must be 'partition', 'random' or 'log'")
 
 
 class GraphRKDLoss(nn.Module):
-    """Destilação pelo embedding de grafo (Método 1 'profile' ou Método 2 'mds').
+    """Distillation via graph embedding (Method 1 'profile' or Method 2 'mds').
 
     Args:
-        method: ``"profile"`` (perfil de nós ordenado) ou ``"mds"`` (autovalores).
-        n_nodes: N — nº de nós por grafo (use node_search.find_best_n).
-        sampling: ``"partition"``, ``"random"`` ou ``"log"`` (adaptativo).
-        graphs_per_step: nº de grafos quando ``sampling="random"``.
-        alpha/g_min/g_max: hiperparâmetros do ``sampling="log"`` (ver
+        method: ``"profile"`` (ordered node profile) or ``"mds"`` (eigenvalues).
+        n_nodes: N — number of nodes per graph (use node_search.find_best_n).
+        sampling: ``"partition"``, ``"random"`` or ``"log"`` (adaptive).
+        graphs_per_step: number of graphs when ``sampling="random"``.
+        alpha/g_min/g_max: hyperparameters of ``sampling="log"`` (see
             node_search.adaptive_num_graphs).
-        p: ordem da norma de Minkowski usada na perda por grafo.
-        norm: esquema de normalização de escala — ``per_graph`` (média off-diag por
-            grafo, default), ``minibatch`` (μ_batch), ``none`` (crua) ou ``hybrid``
-            (μ_batch + z-score do descritor). Ver ``embeddings.NORM_SCHEMES`` / H2.
-        squared: usa distâncias ao quadrado na matriz.
-        sort_key: chave de ordenação do Método 1 (``"lex"`` por padrão).
+        p: order of the Minkowski norm used in the per-graph loss.
+        norm: scale normalization scheme — ``per_graph`` (per-graph off-diag mean,
+            default), ``minibatch`` (μ_batch), ``none`` (raw) or ``hybrid``
+            (μ_batch + descriptor z-score). See ``embeddings.NORM_SCHEMES`` / H2.
+        squared: uses squared distances in the matrix.
+        sort_key: sorting key of Method 1 (``"lex"`` by default).
     """
 
     def __init__(self, method="profile", n_nodes=8, sampling="partition",
@@ -92,7 +92,7 @@ class GraphRKDLoss(nn.Module):
                  p=2, norm="per_graph", squared=False, sort_key="lex"):
         super().__init__()
         if method not in ("profile", "mds"):
-            raise ValueError("method deve ser 'profile' ou 'mds'")
+            raise ValueError("method must be 'profile' or 'mds'")
         self.method = method
         self.n_nodes = n_nodes
         self.sampling = sampling
@@ -113,8 +113,8 @@ class GraphRKDLoss(nn.Module):
         return zscore_descriptor(g) if self._zscore else g
 
     def forward(self, student_emb, teacher_emb, graphs=None, generator=None):
-        """student_emb/teacher_emb: ``(B, d)``. ``graphs`` opcional ``(G, N)``;
-        se None, amostra com ``sample_graphs``."""
+        """student_emb/teacher_emb: ``(B, d)``. ``graphs`` optional ``(G, N)``;
+        if None, samples with ``sample_graphs``."""
         B = student_emb.shape[0]
         if graphs is None:
             graphs = sample_graphs(B, self.n_nodes, self.sampling,
@@ -122,7 +122,7 @@ class GraphRKDLoss(nn.Module):
                                    self.g_max, generator=generator,
                                    device=student_emb.device)
 
-        # μ_batch (escala cruzada) computado da matriz K×K inteira, por lado.
+        # μ_batch (cross scale) computed from the whole K×K matrix, per side.
         s_scale = batch_distance_mean(student_emb) if self._use_scale else None
         s_nodes = student_emb[graphs]                 # (G, N, d_s)
         with torch.no_grad():
@@ -131,5 +131,5 @@ class GraphRKDLoss(nn.Module):
             g_t = self._embed(t_nodes, batch_scale=t_scale)
         g_s = self._embed(s_nodes, batch_scale=s_scale)
 
-        # perda de Minkowski por grafo, média sobre grafos
+        # per-graph Minkowski loss, mean over graphs
         return torch.norm(g_s - g_t, p=self.p, dim=-1).mean()

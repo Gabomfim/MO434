@@ -1,16 +1,16 @@
-"""Garante que os datasets estejam EXTRAÍDOS localmente, puxando os arquivos do
-S3 quando necessário. Compartilhado pelo runner local e pelo backend Modal.
+"""Ensures the datasets are EXTRACTED locally, pulling the files from
+S3 when needed. Shared by the local runner and the Modal backend.
 
-Layout no S3 (mesma região do treino; melhor acesso p/ SageMaker/Modal/etc.):
+Layout on S3 (same region as training; better access for SageMaker/Modal/etc.):
     s3://<bucket>/<prefix>/Cars196.tar
     s3://<bucket>/<prefix>/CUB_200_2011.tgz
 
-O prefixo S3 é PÚBLICO (read-only em graph-rkd/data/*), então o download usa
-HTTPS e **não precisa de credenciais AWS** — o colega roda de qualquer máquina.
-`ensure(...)` é idempotente e CACHEIA: se o marcador do dataset já existe em
-``data_dir`` não baixa nada (basta apontar sempre p/ o mesmo ``data_dir`` — ou,
-no Modal, um Volume persistente — p/ baixar uma única vez). Sem ``s3_prefix``,
-deixa o trainer tentar o download via torchvision."""
+The S3 prefix is PUBLIC (read-only on graph-rkd/data/*), so the download uses
+HTTPS and **needs no AWS credentials** — a colleague runs it from any machine.
+`ensure(...)` is idempotent and CACHES: if the dataset marker already exists in
+``data_dir`` it downloads nothing (just always point to the same ``data_dir`` — or,
+on Modal, a persistent Volume — to download only once). Without ``s3_prefix``,
+it lets the trainer try the download via torchvision."""
 
 import os
 import subprocess
@@ -30,20 +30,20 @@ def has_dataset(data_dir, dataset):
 
 
 def s3_to_https(s3_prefix):
-    """s3://bucket/key... -> https://bucket.s3.amazonaws.com/key... (acesso público)."""
+    """s3://bucket/key... -> https://bucket.s3.amazonaws.com/key... (public access)."""
     rest = s3_prefix[len("s3://"):] if s3_prefix.startswith("s3://") else s3_prefix
     bucket, _, key = rest.partition("/")
     return f"https://{bucket}.s3.amazonaws.com/{key}".rstrip("/")
 
 
 def _download_https(url, dst, attempts=25, progress=False):
-    """Baixa ``url`` -> ``dst`` com RESUME (Range) e retries/backoff. Sem creds.
-    ``progress=True`` mostra uma barra tqdm (para uso interativo/notebook); fica
-    desligada por padrão para não poluir logs de treino (SageMaker/Modal/local)."""
+    """Downloads ``url`` -> ``dst`` with RESUME (Range) and retries/backoff. No creds.
+    ``progress=True`` shows a tqdm bar (for interactive/notebook use); it is
+    off by default so it does not clutter training logs (SageMaker/Modal/local)."""
     bar_cls = None
     if progress:
         try:
-            from tqdm.auto import tqdm as bar_cls  # notebook ou terminal
+            from tqdm.auto import tqdm as bar_cls  # notebook or terminal
         except ImportError:
             bar_cls = None
     last = None
@@ -78,11 +78,11 @@ def _download_https(url, dst, attempts=25, progress=False):
             if i == attempts:
                 break
             time.sleep(min(30, 3 * i))
-    raise RuntimeError(f"download HTTPS falhou ({url}): {last}")
+    raise RuntimeError(f"HTTPS download failed ({url}): {last}")
 
 
 def _s3_cp(uri, dst, profile=None):
-    """Fallback com credenciais (se o bucket voltar a ser privado)."""
+    """Fallback with credentials (if the bucket becomes private again)."""
     env = dict(os.environ, AWS_MAX_ATTEMPTS="15", AWS_RETRY_MODE="standard")
     if profile:
         env["AWS_PROFILE"] = profile
@@ -91,46 +91,46 @@ def _s3_cp(uri, dst, profile=None):
 
 def ensure(data_dir, datasets, s3_prefix=DEFAULT_S3, profile=None,
            keep_archive=False, progress=False):
-    """Garante Cars196/ e/ou CUB_200_2011/ EXTRAÍDOS em ``data_dir`` (cacheia:
-    pula o que já está lá). Baixa por HTTPS público; se falhar e houver creds,
-    tenta ``aws s3 cp``. Retorna a lista de datasets prontos."""
+    """Ensures Cars196/ and/or CUB_200_2011/ EXTRACTED in ``data_dir`` (caches:
+    skips what is already there). Downloads via public HTTPS; if it fails and there
+    are creds, tries ``aws s3 cp``. Returns the list of ready datasets."""
     os.makedirs(data_dir, exist_ok=True)
     https_base = s3_to_https(s3_prefix) if s3_prefix else None
     ready = []
     for ds in datasets:
         if has_dataset(data_dir, ds):
-            print(f"[data] {ds}: já extraído em {data_dir} (cache hit)")
+            print(f"[data] {ds}: already extracted in {data_dir} (cache hit)")
             ready.append(ds)
             continue
         if not s3_prefix:
-            print(f"[data] {ds}: sem s3_prefix; trainer tentará baixar via torchvision")
+            print(f"[data] {ds}: no s3_prefix; trainer will try to download via torchvision")
             continue
         arch = ARCHIVE[ds]
         local = os.path.join(data_dir, arch)
         url = f"{https_base}/{arch}"
-        print(f"[data] {ds}: baixando (público) {url} -> {local}", flush=True)
+        print(f"[data] {ds}: downloading (public) {url} -> {local}", flush=True)
         try:
             _download_https(url, local, progress=progress)
-        except Exception as e:  # noqa: BLE001 - fallback com creds se privado
-            print(f"[data] {ds}: HTTPS falhou ({e}); tentando aws s3 cp")
+        except Exception as e:  # noqa: BLE001 - fallback with creds if private
+            print(f"[data] {ds}: HTTPS failed ({e}); trying aws s3 cp")
             _s3_cp(f"{s3_prefix.rstrip('/')}/{arch}", local, profile)
-        print(f"[data] {ds}: extraindo {arch}", flush=True)
+        print(f"[data] {ds}: extracting {arch}", flush=True)
         with tarfile.open(local) as t:
             t.extractall(data_dir)
         if not keep_archive:
             os.remove(local)
         if not has_dataset(data_dir, ds):
-            raise RuntimeError(f"{ds}: marcador ausente após extrair {arch}")
+            raise RuntimeError(f"{ds}: marker missing after extracting {arch}")
         ready.append(ds)
     return ready
 
 
 if __name__ == "__main__":
     import argparse
-    p = argparse.ArgumentParser(description="Prepara datasets a partir do S3")
+    p = argparse.ArgumentParser(description="Prepares datasets from S3")
     p.add_argument("--data", default="data")
     p.add_argument("--datasets", nargs="+", default=["cars196", "cub200"])
     p.add_argument("--s3-prefix", default=DEFAULT_S3)
     p.add_argument("--aws-profile", default=os.environ.get("AWS_PROFILE"))
     a = p.parse_args()
-    print("prontos:", ensure(a.data, a.datasets, a.s3_prefix, a.aws_profile))
+    print("ready:", ensure(a.data, a.datasets, a.s3_prefix, a.aws_profile))

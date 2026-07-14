@@ -1,16 +1,16 @@
-"""Helpers compartilhados para os experimentos de METRIC LEARNING (retrieval).
+"""Shared helpers for the METRIC LEARNING (retrieval) experiments.
 
-Datasets usam o split DISJUNTO (*Metric): classes de treino e teste não se
-sobrepõem; avaliação por recall@K. Política comum (espelha a de classificação,
-mas para retrieval):
+Datasets use the DISJOINT split (*Metric): train and test classes do not
+overlap; evaluation by recall@K. Common policy (mirrors the classification
+one, but for retrieval):
 
-* Mesma métrica (recall@K) em train/val/test.
-* Validação SEMPRE existe: como o split disjunto não traz val, separamos um
-  subconjunto de CLASSES de treino como val (disjunto de treino e teste).
-* Seleção do modelo final pelo melhor recall@1 de VALIDAÇÃO (nunca teste).
+* Same metric (recall@K) on train/val/test.
+* Validation ALWAYS exists: since the disjoint split provides no val, we set
+  aside a subset of training CLASSES as val (disjoint from train and test).
+* Final model selection by the best VALIDATION recall@1 (never test).
 
-Reutiliza NPairs (amostragem por classe p/ triplet), recall() e os datasets
-*Metric do repo.
+Reuses NPairs (per-class sampling for triplet), recall() and the repo's
+*Metric datasets.
 """
 
 import copy
@@ -29,21 +29,21 @@ __all__ = ["DATASETS", "build_metric_loaders", "embed", "evaluate_recall_splits"
            "recall_log_dict", "retrieval_metrics", "score_of", "SELECT_METRICS",
            "RECALL_K"]
 
-# Conjunto de métricas escolhido p/ DML retrieval: Recall@K (curva convencional),
-# R-Precision e mAP@R (sensíveis à ordenação de todos os relevantes). Primária =
-# mAP@R (Musgrave et al. 2020). --select_metric mapeia para a chave da métrica.
+# Metric set chosen for DML retrieval: Recall@K (conventional curve),
+# R-Precision and mAP@R (sensitive to the ordering of all relevant items). Primary =
+# mAP@R (Musgrave et al. 2020). --select_metric maps to the metric key.
 SELECT_METRICS = {"mapr": "mAP@R", "rprec": "R_precision", "recall1": "recall@1"}
 
-# chave -> (classe *Metric, marcador de download sob --data)
+# key -> (*Metric class, download marker under --data)
 DATASETS = {
     "cars196": (dataset.Cars196Metric, os.path.join("Cars196", "cars_annos.mat")),
     "cub200": (dataset.CUB2011Metric, os.path.join("CUB_200_2011", "images.txt")),
 }
-RECALL_K = [1, 2, 4, 8]   # K padrão p/ CUB/Cars
+RECALL_K = [1, 2, 4, 8]   # default K for CUB/Cars
 
 
 def _restrict(ds, allowed_classes):
-    """Cópia rasa do dataset restrita a um conjunto de classes (mantém transform)."""
+    """Shallow copy of the dataset restricted to a set of classes (keeps transform)."""
     allowed = set(allowed_classes)
     d = copy.copy(ds)
     d.samples = [(p, c) for (p, c) in ds.samples if c in allowed]
@@ -57,11 +57,11 @@ def _restrict(ds, allowed_classes):
 def build_metric_loaders(dataset_cls, data_root, train_tf, test_tf, batch,
                          num_image_per_class, iter_per_epoch, workers,
                          val_class_frac, seed, download):
-    """Loaders de metric learning. Retorna (loaders, info).
+    """Metric learning loaders. Returns (loaders, info).
 
-    loaders: 'train' (NPairs, classes de treino menos val), 'train_eval', 'val'
-    (classes de treino separadas), 'test' (classes de teste oficiais).
-    A divisão treino/val é por CLASSE (disjunta), com semente fixa.
+    loaders: 'train' (NPairs, training classes minus val), 'train_eval', 'val'
+    (held-out training classes), 'test' (official test classes).
+    The train/val division is per CLASS (disjoint), with a fixed seed.
     """
     train_aug = dataset_cls(data_root, train=True, transform=train_tf, download=download)
     train_ev = dataset_cls(data_root, train=True, transform=test_tf, download=False)
@@ -98,7 +98,7 @@ def build_metric_loaders(dataset_cls, data_root, train_tf, test_tf, batch,
 
 
 def embed(net, images, l2=True):
-    """forward_features -> (embedding [L2-norm opcional], stage2)."""
+    """forward_features -> (embedding [optional L2-norm], stage2)."""
     feats = net.forward_features(images)
     emb = feats["embedding"]
     if l2:
@@ -108,21 +108,21 @@ def embed(net, images, l2=True):
 
 @torch.no_grad()
 def retrieval_metrics(embeddings, labels, K):
-    """Métricas de retrieval/reranking a partir dos embeddings + rótulos.
+    """Retrieval/reranking metrics from the embeddings + labels.
 
-    Relevância = mesma classe (binária). Conjunto escolhido p/ DML retrieval:
-      * recall@k (para cada k em K) — curva convencional (há vizinho relevante
-        no top-k); comparabilidade com a literatura;
-      * R_precision e mAP@R — sensíveis à ORDENAÇÃO de todos os R relevantes da
-        query; recomendados por Musgrave et al. (2020), com mAP@R como primária.
+    Relevance = same class (binary). Set chosen for DML retrieval:
+      * recall@k (for each k in K) — conventional curve (there is a relevant
+        neighbor in the top-k); comparability with the literature;
+      * R_precision and mAP@R — sensitive to the ORDERING of all R relevant items
+        of the query; recommended by Musgrave et al. (2020), with mAP@R as primary.
     """
     labels = labels.view(-1)
     N = embeddings.size(0)
     D = pdist(embeddings, squared=True)
-    D.fill_diagonal_(float("inf"))                      # exclui a própria query
+    D.fill_diagonal_(float("inf"))                      # excludes the query itself
 
     _, inv, counts = torch.unique(labels, return_inverse=True, return_counts=True)
-    R = (counts[inv] - 1).clamp(min=0)                  # relevantes por query
+    R = (counts[inv] - 1).clamp(min=0)                  # relevant items per query
     kmax = min(N - 1, max(int(R.max().item()), max(K)))
     knn = D.topk(kmax, dim=1, largest=False, sorted=True).indices
     correct = (labels[knn] == labels.unsqueeze(1)).float()      # (N, kmax)
@@ -131,10 +131,10 @@ def retrieval_metrics(embeddings, labels, K):
     Rf = R.float().clamp(min=1)
     rank_mask = (torch.arange(kmax).unsqueeze(0) < R.unsqueeze(1)).float()
 
-    # recall@k convencional (taxa de acerto: >=1 relevante no top-k)
+    # conventional recall@k (hit rate: >=1 relevant item in the top-k)
     out = {f"recall@{k}": (correct[:, :min(k, kmax)].sum(1) > 0).float().mean().item()
            for k in K}
-    # sensíveis à ordenação de TODOS os R relevantes da query
+    # sensitive to the ordering of ALL R relevant items of the query
     out["R_precision"] = ((correct * rank_mask).sum(1) / Rf)[valid].mean().item()
     prec_at = torch.cumsum(correct, dim=1) / pos.unsqueeze(0)
     out["mAP@R"] = ((prec_at * correct * rank_mask).sum(1) / Rf)[valid].mean().item()
@@ -142,7 +142,7 @@ def retrieval_metrics(embeddings, labels, K):
 
 
 def score_of(split_metrics, select_metric):
-    """Escalar de seleção: 'mapr'->mAP@R (primária), 'rprec'->R_precision,
+    """Selection scalar: 'mapr'->mAP@R (primary), 'rprec'->R_precision,
     'recall1'->recall@1."""
     return split_metrics[SELECT_METRICS[select_metric]]
 
@@ -160,8 +160,8 @@ def _retrieval_on(net, loader, device, l2, K, desc):
 
 def evaluate_recall_splits(net, loaders, device, l2, K, tag="",
                            splits=("train", "val", "test")):
-    """Mesmas métricas de retrieval em cada split.
-    Retorna {split: {recall@k, R_precision, mAP@R, nDCG, MRR}}."""
+    """Same retrieval metrics on each split.
+    Returns {split: {recall@k, R_precision, mAP@R, nDCG, MRR}}."""
     key = {"train": "train_eval", "val": "val", "test": "test"}
     return {s: _retrieval_on(net, loaders[key.get(s, s)], device, l2, K, f"[{tag}{s}]")
             for s in splits}

@@ -1,12 +1,12 @@
-"""Lógica do notebook qualitativo (§7.5) — painéis de retrieval top-k.
+"""Logic for the qualitative notebook (§7.5) — top-k retrieval panels.
 
-Separado do `analysis_utils` de propósito: importa torch/torchvision (pesado), então
-só é carregado pelo `05`. Mantém o `analysis_utils` livre de torch (para os notebooks
-00–04/06 rodarem em máquina sem torchvision).
+Kept separate from `analysis_utils` on purpose: it imports torch/torchvision (heavy), so
+it is only loaded by `05`. Keeps `analysis_utils` torch-free (so notebooks
+00–04/06 run on a machine without torchvision).
 
-Fluxo: escolhe o run (do results.csv) → resolve o checkpoint (local
-`experiments_local/` ou artefato W&B) → embute o test split → top-k retrieval →
-figura (query + vizinhos, borda verde=mesma classe, vermelha=classe diferente).
+Flow: picks the run (from results.csv) → resolves the checkpoint (local
+`experiments_local/` or W&B artifact) → embeds the test split → top-k retrieval →
+figure (query + neighbors, green border=same class, red=different class).
 """
 
 import glob
@@ -24,7 +24,7 @@ for _p in (_RKD, os.path.join(_RKD, "sm"), _HERE):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import analysis_utils as au          # noqa: E402  (carrega o .env -> WANDB_API_KEY)
+import analysis_utils as au          # noqa: E402  (loads the .env -> WANDB_API_KEY)
 import data_prep                     # noqa: E402
 from metric_common import DATASETS, build_metric_loaders, embed  # noqa: E402
 from model import ConvNextMicro      # noqa: E402
@@ -36,12 +36,12 @@ DATA_DIR = os.path.join(_RKD, "data")
 
 
 # --------------------------------------------------------------------------- #
-# seleção de run + resolução de checkpoint                                     #
+# run selection + checkpoint resolution                                        #
 # --------------------------------------------------------------------------- #
 def pick_run(df, dataset, teacher, student, method=None, N=None, seed=0, phase="phase5"):
-    """Escolhe UM run (linha do results.csv) para (dataset, teacher, student).
-    triplet-only não tem teacher; graph-rkd filtra por method/N. Prefere `seed`,
-    senão o primeiro disponível. Retorna a linha (Series) ou None."""
+    """Picks ONE run (row of results.csv) for (dataset, teacher, student).
+    triplet-only has no teacher; graph-rkd filters by method/N. Prefers `seed`,
+    otherwise the first available. Returns the row (Series) or None."""
     q = df[(df.phase == phase) & (df.dataset == dataset) & (df.student == student)]
     if student != "triplet_only":
         q = q[q.teacher == teacher]
@@ -57,8 +57,8 @@ def pick_run(df, dataset, teacher, student, method=None, N=None, seed=0, phase="
 
 
 def resolve_ckpt(run_row):
-    """Caminho local p/ o checkpoint do run: procura em experiments_local/<name>/,
-    senão baixa o artefato de modelo logado por aquele run no W&B."""
+    """Local path to the run's checkpoint: looks in experiments_local/<name>/,
+    otherwise downloads the model artifact logged by that run on W&B."""
     name = run_row["run"]
     for base in (os.path.join(_RKD, "experiments_local"), "experiments_local",
                  os.path.join(_RKD, "sm", "experiments_local")):
@@ -66,12 +66,12 @@ def resolve_ckpt(run_row):
             p = os.path.join(base, name, fn)
             if os.path.exists(p):
                 return p
-    # W&B: artefato de modelo logado por este run (o student; o teacher é
-    # use_artifact, não logged -> não aparece aqui). O run loga UMA versão por
-    # época (epochs 5,10,...); os aliases "best"/"last" não são confiáveis porque
-    # o NOME do artefato é compartilhado entre runs (o alias migra p/ o último run
-    # que logou). Pegamos a versão de MAIOR época: seu student_last.pth carrega o
-    # best_state GLOBAL do run (acumulado ao longo do treino).
+    # W&B: model artifact logged by this run (the student; the teacher is
+    # use_artifact, not logged -> does not appear here). The run logs ONE version per
+    # epoch (epochs 5,10,...); the "best"/"last" aliases are not reliable because
+    # the artifact NAME is shared across runs (the alias migrates to the last run
+    # that logged). We take the version with the HIGHEST epoch: its student_last.pth loads the
+    # GLOBAL best_state of the run (accumulated over training).
     import wandb
     run = wandb.Api().run(f"{au.ENTITY}/{au.PROJECT}/{run_row['id']}")
     arts = [a for a in run.logged_artifacts()
@@ -79,7 +79,7 @@ def resolve_ckpt(run_row):
     if not arts:
         arts = [a for a in run.logged_artifacts() if a.type == "model"]
     if not arts:
-        raise FileNotFoundError(f"sem artefato de modelo p/ run '{name}'")
+        raise FileNotFoundError(f"no model artifact for run '{name}'")
     art = max(arts, key=lambda a: a.metadata.get("epoch", -1))
     d = art.download()
     for fn in ("student_last.pth", "best.pth"):
@@ -88,7 +88,7 @@ def resolve_ckpt(run_row):
     pths = sorted(glob.glob(os.path.join(d, "*.pth")))
     if pths:
         return pths[0]
-    raise FileNotFoundError(f"sem .pth no artefato {art.name} (run '{name}')")
+    raise FileNotFoundError(f"no .pth in artifact {art.name} (run '{name}')")
 
 
 def load_student(ckpt):
@@ -101,15 +101,15 @@ def load_student(ckpt):
 
 
 # --------------------------------------------------------------------------- #
-# dados + embeddings + figura                                                  #
+# data + embeddings + figure                                                   #
 # --------------------------------------------------------------------------- #
 def test_loader(dataset, workers=0):
-    """Test split do dataset (puxa do S3 e cacheia se preciso).
+    """Test split of the dataset (pulls from S3 and caches if needed).
 
-    workers=0 por padrão: só fazemos embedding (inferência), então DataLoader
-    workers não ajudam e evitam o "bus error / insufficient shared memory (shm)"
-    comum em WSL/Docker, onde /dev/shm é pequeno. Aumente se sua máquina tiver
-    shm suficiente e você quiser I/O em paralelo."""
+    workers=0 by default: we only do embedding (inference), so DataLoader
+    workers do not help and they avoid the "bus error / insufficient shared memory (shm)"
+    common on WSL/Docker, where /dev/shm is small. Increase it if your machine has
+    enough shm and you want parallel I/O."""
     data_prep.ensure(DATA_DIR, [dataset], progress=True)
     cls, _ = DATASETS[dataset]
     tf = T.Compose([T.Resize((256, 256)), T.CenterCrop(224), T.ToTensor(),
@@ -121,9 +121,9 @@ def test_loader(dataset, workers=0):
 
 
 def embed_test(model, loader, desc="embedding"):
-    """Embeddings + rótulos do split. NÃO guarda as imagens (isso estourava a RAM
-    e derrubava o WSL: ~8k imgs x 3x224x224 float32 ~ 5 GB por modelo). As poucas
-    imagens dos painéis são relidas por índice do dataset em run_cell."""
+    """Embeddings + labels of the split. Does NOT keep the images (that blew up RAM
+    and crashed WSL: ~8k imgs x 3x224x224 float32 ~ 5 GB per model). The few
+    panel images are re-read by dataset index in run_cell."""
     E, Y = [], []
     with torch.no_grad():
         for x, y in tqdm(loader, desc=desc, unit="batch", leave=False):
@@ -139,8 +139,8 @@ def _unnorm(t):
 
 
 def _topk(E, k, chunk=2048):
-    """Top-k vizinhos (exclui a própria query) por BLOCOS de linhas, para nunca
-    alocar a matriz de similaridade N x N inteira (evita picos de RAM)."""
+    """Top-k neighbors (excludes the query itself) by BLOCKS of rows, so as to never
+    allocate the entire N x N similarity matrix (avoids RAM spikes)."""
     N = E.size(0)
     out = torch.empty(N, k, dtype=torch.long)
     for s in range(0, N, chunk):
@@ -153,10 +153,10 @@ def _topk(E, k, chunk=2048):
 
 def compare_panels(tg, tb, Y, imgs, queries, title, path, topk=5,
                    labels=("Graph-RKD", "baseline")):
-    """Figura comparando dois modelos nas MESMAS queries: cada linha = uma query;
-    colunas = [query | top-k do modelo A | top-k do modelo B]. Borda verde = mesma
-    classe da query; vermelha = classe diferente. `tg`/`tb` são índices top-k já
-    calculados; `imgs` é um dict {índice -> tensor} só com as imagens usadas."""
+    """Figure comparing two models on the SAME queries: each row = one query;
+    columns = [query | top-k of model A | top-k of model B]. Green border = same
+    class as the query; red = different class. `tg`/`tb` are top-k indices already
+    computed; `imgs` is a dict {index -> tensor} with only the images used."""
     ncol = 1 + 2 * topk
     fig, ax = plt.subplots(len(queries), ncol, figsize=(1.5 * ncol, 1.7 * len(queries)),
                            squeeze=False)
@@ -182,17 +182,17 @@ def compare_panels(tg, tb, Y, imgs, queries, title, path, topk=5,
 
 def run_cell(df, dataset, teacher, baseline_student, graph_method="mds", graph_N=4,
              topk=5, n_success=3, n_fail=3, outdir="figures"):
-    """Produz a figura qualitativa de uma célula (dataset, teacher): Graph-RKD
-    headline vs o baseline mais forte, nas mesmas queries (acertos + erros do
-    Graph-RKD). Salva em outdir/fig_qual_<dataset>_<teacher>.pdf."""
+    """Produces the qualitative figure of a cell (dataset, teacher): Graph-RKD
+    headline vs the strongest baseline, on the same queries (hits + misses of
+    Graph-RKD). Saves to outdir/fig_qual_<dataset>_<teacher>.pdf."""
     gr = pick_run(df, dataset, teacher, "graph-rkd", graph_method, graph_N)
     br = pick_run(df, dataset, teacher, baseline_student)
     if gr is None or br is None:
-        print(f"[skip] {dataset}/{teacher}: run ausente (graph={gr is not None}, "
+        print(f"[skip] {dataset}/{teacher}: run missing (graph={gr is not None}, "
               f"baseline={br is not None})")
         return None
     loader = test_loader(dataset)
-    ds = loader.dataset                              # test split (ordem = ordem dos embeddings)
+    ds = loader.dataset                              # test split (order = order of the embeddings)
     Eg, Y = embed_test(load_student(resolve_ckpt(gr)), loader,
                        desc=f"{dataset}/{teacher} embedding graph-rkd")
     Eb, _ = embed_test(load_student(resolve_ckpt(br)), loader,
@@ -202,7 +202,7 @@ def run_cell(df, dataset, teacher, baseline_student, graph_method="mds", graph_N
     correct = [i for i in range(len(Y)) if Y[top1[i]] == Y[i]]
     wrong = [i for i in range(len(Y)) if Y[top1[i]] != Y[i]]
     queries = correct[:n_success] + wrong[:n_fail]
-    # relê só as imagens que aparecem no painel (queries + vizinhos mostrados)
+    # re-reads only the images that appear in the panel (queries + neighbors shown)
     need = set(queries)
     for q in queries:
         need.update(int(i) for i in tg[q])
@@ -212,5 +212,5 @@ def run_cell(df, dataset, teacher, baseline_student, graph_method="mds", graph_N
     compare_panels(tg, tb, Y, imgs, queries, f"{dataset} · {teacher}", path, topk=topk,
                    labels=("Graph-RKD", baseline_student.replace("_", "-")))
     print(f"[ok] {dataset}/{teacher} -> {path} "
-          f"(acertos top-1 do Graph-RKD: {len(correct)}/{len(Y)})")
+          f"(Graph-RKD top-1 hits: {len(correct)}/{len(Y)})")
     return path

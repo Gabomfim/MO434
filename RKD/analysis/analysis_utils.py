@@ -1,14 +1,14 @@
-"""Utilidades de análise para a campanha Graph-RKD (preenche a Seção 7 do paper).
+"""Analysis utilities for the Graph-RKD campaign (fills Section 7 of the paper).
 
-Puxa as runs do W&B (gabomfim-unicamp/graph-rkd), classifica cada run em um
-dos 5 alunos / config Graph-RKD, agrega por seeds (média ± sem) e produz as
-tabelas e figuras que a Seção 7 pede (H0–H5). Os notebooks só chamam estas
-funções. `pandas`/`matplotlib` são dependências; `wandb` é importado sob demanda.
+Pulls the W&B runs (gabomfim-unicamp/graph-rkd), classifies each run into one
+of the 5 students / Graph-RKD config, aggregates over seeds (mean ± sem) and produces the
+tables and figures that Section 7 requires (H0–H5). The notebooks only call these
+functions. `pandas`/`matplotlib` are dependencies; `wandb` is imported on demand.
 
-Regras de análise (§8 do paper):
-  * noise floor: sem de seeds por célula; diferença < ~1 sem = indistinguível;
-  * "vence" só se a média excede o melhor baseline por > 1 sem E o sinal é
-    consistente entre teachers; reportar por célula (dataset × teacher).
+Analysis rules (§8 of the paper):
+  * noise floor: sem of seeds per cell; difference < ~1 sem = indistinguishable;
+  * "beats" only if the mean exceeds the best baseline by > 1 sem AND the sign is
+    consistent across teachers; report per cell (dataset × teacher).
 """
 
 import math
@@ -19,10 +19,10 @@ import pandas as pd
 
 
 def _load_dotenv():
-    """Carrega variáveis de um `.env` (WANDB_API_KEY etc.) sem depender de pacote.
-    Procura em RKD/analysis/, RKD/ e na raiz do repo; NÃO sobrescreve variáveis já
-    definidas no ambiente. Rodado no import — assim o `00` acha a chave do W&B sem
-    `export` manual."""
+    """Loads variables from a `.env` (WANDB_API_KEY etc.) without depending on a package.
+    Looks in RKD/analysis/, RKD/ and the repo root; does NOT overwrite variables already
+    defined in the environment. Run on import — so `00` finds the W&B key without a
+    manual `export`."""
     here = os.path.dirname(os.path.abspath(__file__))
     for d in (here, os.path.dirname(here), os.path.dirname(os.path.dirname(here))):
         path = os.path.join(d, ".env")
@@ -51,7 +51,7 @@ TABDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tables")
 # fetch + classify                                                             #
 # --------------------------------------------------------------------------- #
 def _student(cfg, tags):
-    """Classifica a run em um dos 5 alunos (ou teacher) a partir de config/tags."""
+    """Classifies the run into one of the 5 students (or teacher) from config/tags."""
     tags = set(tags or [])
     if "teacher" in tags:
         return "teacher"
@@ -72,8 +72,8 @@ KNOWN_PHASES = ("teachers", "dev", "conv", "phase0", "phase1", "phase2",
 
 
 def _phase_of(name, tags):
-    """Fase da run: tag de fase se houver (build_plan taga cada job); senão
-    derivada do prefixo do nome (runs antigas não têm tag). convfloor->conv,
+    """Run phase: phase tag if present (build_plan tags each job); otherwise
+    derived from the name prefix (old runs have no tag). convfloor->conv,
     smoke->phase0, floor->phase1, baseline gate->phase5."""
     for t in (tags or []):
         if t in KNOWN_PHASES:
@@ -94,14 +94,14 @@ def _phase_of(name, tags):
 
 
 def fetch_runs(entity=ENTITY, project=PROJECT):
-    """DataFrame: uma linha por run W&B (config + summary achatados + classificação)."""
+    """DataFrame: one row per W&B run (flattened config + summary + classification)."""
     import wandb
     api = wandb.Api()
     rows = []
     for r in api.runs(f"{entity}/{project}"):
-        # so runs CONCLUIDAS entram na analise. runs 'crashed'/'failed'/'killed'
-        # ou ainda 'running' (campanha em curso) tem summary parcial/ausente e
-        # entrariam com metrica lixo -> excluir. Ver GUIA_ANALISE.md.
+        # only FINISHED runs enter the analysis. 'crashed'/'failed'/'killed' runs
+        # or still 'running' ones (campaign in progress) have partial/missing summary and
+        # would enter with garbage metrics -> exclude. See GUIA_ANALISE.md.
         if r.state != "finished":
             continue
         cfg = {k: v for k, v in r.config.items() if not k.startswith("_")}
@@ -126,21 +126,21 @@ def fetch_runs(entity=ENTITY, project=PROJECT):
 
 
 def agg(df, group_cols, metric="test_mAP@R"):
-    """Estatística por config sobre seeds. Primária = **mediana** (robusta, e o
-    projeto reporta o modelo da mediana — não estamos aumentando seeds); mean/sem
-    ficam só como referência. Retorna median/mean/sem/n."""
+    """Statistics per config over seeds. Primary = **median** (robust, and the
+    project reports the median model — we are not increasing seeds); mean/sem
+    remain only as reference. Returns median/mean/sem/n."""
     g = df.dropna(subset=[metric]).groupby(group_cols)[metric]
     out = g.agg(["median", "mean", "sem", "count"]).reset_index()
     return out.rename(columns={"count": "n"})
 
 
 def median_run(df, group_cols, metric="test_mAP@R"):
-    """Por config, a RUN cuja métrica é a mediana — o modelo/checkpoint a reportar."""
+    """Per config, the RUN whose metric is the median — the model/checkpoint to report."""
     d = df.dropna(subset=[metric]).copy()
     picks = []
     for key, sub in d.groupby(group_cols):
         sub = sub.sort_values(metric).reset_index(drop=True)
-        picks.append(sub.iloc[len(sub) // 2])       # mediana (seeds ímpares -> run real)
+        picks.append(sub.iloc[len(sub) // 2])       # median (odd seeds -> real run)
     return pd.DataFrame(picks)
 
 
@@ -154,7 +154,7 @@ STUDENT_LABEL = {"triplet_only": "triplet-only", "rkd_dist": "+RKD-D",
 
 
 def headline_table(df, dataset, teacher, metric="test_mAP@R"):
-    """Tabela dos 5 alunos (mean±sem) para uma célula (dataset, teacher)."""
+    """Table of the 5 students (mean±sem) for a cell (dataset, teacher)."""
     cell = df[(df.dataset == dataset) & (df.phase == "phase5")]
     cell = cell[(cell.teacher == teacher) | (cell.student == "triplet_only")]
     t = agg(cell, ["student"], metric)
@@ -165,28 +165,28 @@ def headline_table(df, dataset, teacher, metric="test_mAP@R"):
 
 
 def h1_verdict(table):
-    """Veredito H1 por MEDIANA (seeds não aumentados; reportamos o modelo da
-    mediana). Graph-RKD 'vence'/'iguala'/'perde' comparando a mediana da célula
-    contra a do melhor baseline. (Chama por célula dataset×teacher.)"""
+    """H1 verdict by MEDIAN (seeds not increased; we report the median
+    model). Graph-RKD 'beats'/'ties'/'loses' comparing the cell median
+    against that of the best baseline. (Call per dataset×teacher cell.)"""
     base = table[table.student != "+Graph-RKD"]
     g = table[table.student == "+Graph-RKD"]
     if base.empty or g.empty:
-        return "sem dados suficientes"
+        return "insufficient data"
     best = base.loc[base["median"].idxmax()]
     gm = float(g["median"].iloc[0])
     if gm > best["median"]:
-        return f"Graph-RKD VENCE {best.student} (mediana {gm:.4f} > {best['median']:.4f})"
+        return f"Graph-RKD BEATS {best.student} (median {gm:.4f} > {best['median']:.4f})"
     if abs(gm - best["median"]) < 1e-6:
-        return f"Graph-RKD IGUALA {best.student} (mediana {gm:.4f})"
-    return f"Graph-RKD PERDE p/ {best.student} (mediana {gm:.4f} < {best['median']:.4f})"
+        return f"Graph-RKD TIES {best.student} (median {gm:.4f})"
+    return f"Graph-RKD LOSES to {best.student} (median {gm:.4f} < {best['median']:.4f})"
 
 
 def fig_h1_bar(df, metric="test_mAP@R", save=True):
-    """Barras agrupadas de mAP@R por aluno, uma faceta por (dataset, teacher)."""
+    """Grouped bars of mAP@R per student, one facet per (dataset, teacher)."""
     cells = df[df.phase == "phase5"][["dataset", "teacher"]].dropna().drop_duplicates()
     cells = [(d, t) for d, t in cells.itertuples(index=False)]
     if not cells:
-        print("sem runs de phase5 ainda"); return None
+        print("no phase5 runs yet"); return None
     fig, axes = plt.subplots(1, len(cells), figsize=(4.2 * len(cells), 3.4), squeeze=False)
     for ax, (d, t) in zip(axes[0], cells):
         tab = headline_table(df, d, t, metric)
@@ -205,11 +205,11 @@ def fig_h1_bar(df, metric="test_mAP@R", save=True):
 # §7.2 — H0 (λg viability) and H2 (normalization)                              #
 # --------------------------------------------------------------------------- #
 def fig_h0_lambda(df, save=True):
-    """val mAP@R vs λg na fatia do gate (phase1) + piso triplet-only."""
+    """val mAP@R vs λg on the gate slice (phase1) + triplet-only floor."""
     g = df[df.phase == "phase1"]
     gg = g[g.student == "graph-rkd"].dropna(subset=["lambda_g", "val_mAP@R"])
     if gg.empty:
-        print("sem runs de phase1 ainda"); return None
+        print("no phase1 runs yet"); return None
     curve = agg(gg, ["lambda_g"], "val_mAP@R").sort_values("lambda_g")
     floor = g[g.student == "triplet_only"]["val_mAP@R"].dropna()
     fig, ax = plt.subplots(figsize=(5, 3.4))
@@ -227,17 +227,17 @@ def fig_h0_lambda(df, save=True):
 
 
 def fig_h2_norm(df, save=True):
-    """Barras de mAP@R por esquema de normalização (melhor λg por esquema), phase2."""
+    """mAP@R bars per normalization scheme (best λg per scheme), phase2."""
     g = df[(df.phase == "phase2") & (df.student == "graph-rkd")].dropna(subset=["norm"])
     if g.empty:
-        print("sem runs de phase2 ainda"); return None
-    best = agg(g, ["norm"], "val_mAP@R")            # melhor λg embutido via max? usar mean
-    # pega, por norm, a melhor média entre λg:
+        print("no phase2 runs yet"); return None
+    best = agg(g, ["norm"], "val_mAP@R")            # best λg embedded via max? use mean
+    # takes, per norm, the best mean across λg:
     per = agg(g, ["norm", "lambda_g"], "val_mAP@R")
     best = per.loc[per.groupby("norm")["median"].idxmax()]
     fig, ax = plt.subplots(figsize=(5, 3.4))
     ax.bar(best.norm, best["median"], yerr=best["sem"], capsize=3, color="#2b6cb0")
-    ax.set_ylabel("val mAP@R (melhor λg)"); ax.set_title("H2: normalization ablation")
+    ax.set_ylabel("val mAP@R (best λg)"); ax.set_title("H2: normalization ablation")
     fig.tight_layout()
     if save:
         os.makedirs(FIGDIR, exist_ok=True)
@@ -249,17 +249,17 @@ def fig_h2_norm(df, save=True):
 # §7.3 — H4 (objective robustness) + descriptor probe (H3 fidelity)            #
 # --------------------------------------------------------------------------- #
 def fig_h4_overlay(df, save=True):
-    """Overlay val mAP@R vs λg p/ regression e contrastive (phase4). Quantifica a
-    largura da banda que fica a <1 sem do melhor de cada objetivo."""
+    """Overlay val mAP@R vs λg for regression and contrastive (phase4). Quantifies the
+    width of the band that stays within <1 sem of the best of each objective."""
     g = df[df.phase == "phase4"].dropna(subset=["lambda_g", "objective", "val_mAP@R"])
     if g.empty:
-        print("sem runs de phase4 ainda"); return None, {}
+        print("no phase4 runs yet"); return None, {}
     fig, ax = plt.subplots(figsize=(5.2, 3.4))
     widths = {}
     for obj, sub in g.groupby("objective"):
         c = agg(sub, ["lambda_g"], "val_mAP@R").sort_values("lambda_g")
         ax.errorbar(c.lambda_g, c["median"], yerr=c["sem"], marker="o", capsize=3, label=obj)
-        best = c["median"].max()                    # largura: λg dentro de 10% do melhor
+        best = c["median"].max()                    # width: λg within 10% of the best
         within = c[c["median"] >= 0.9 * best]
         widths[obj] = (within.lambda_g.min(), within.lambda_g.max())
     ax.set_xscale("log"); ax.set_xlabel(r"$\lambda_g$"); ax.set_ylabel("val mAP@R")
@@ -272,14 +272,14 @@ def fig_h4_overlay(df, save=True):
 
 
 def load_probe(path=None):
-    """Carrega o CSV da sonda offline de descritor (§7.3 / H3)."""
+    """Loads the CSV from the offline descriptor probe (§7.3 / H3)."""
     path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "descriptor_probe.csv")
     return pd.read_csv(path)
 
 
 def fig_probe(save=True):
-    """MDS degeneracy e profile tie rate vs N (evidência de mecanismo p/ H3)."""
+    """MDS degeneracy and profile tie rate vs N (mechanism evidence for H3)."""
     p = load_probe()
     md = p[p.method == "mds"].groupby("N")["mds_degenerate_rate"].max()
     pt = p[p.method == "profile"].groupby("N")["profile_tie_rate"].max()
@@ -299,11 +299,11 @@ def fig_probe(save=True):
 # §7.4 — H5: N=3 vs RKD-A                                                       #
 # --------------------------------------------------------------------------- #
 def n3_vs_rkda(df, metric="test_mAP@R", phase="phase5"):
-    """Tabela N=3 (profile e mds) vs RKD-A por (dataset, teacher).
+    """Table N=3 (profile and mds) vs RKD-A per (dataset, teacher).
 
-    Restrito ao HEADLINE (``phase='phase5'``) por padrão: a comparação matched-arity
-    tem que usar as MESMAS condições do RKD-A (que só roda no phase5). Sem o filtro,
-    os N=3 de busca (phase2/3, outras norm/λg) entrariam e enviesariam o veredito."""
+    Restricted to the HEADLINE (``phase='phase5'``) by default: the matched-arity comparison
+    must use the SAME conditions as RKD-A (which only runs in phase5). Without the filter,
+    the search N=3 (phase2/3, other norm/λg) would enter and bias the verdict."""
     sub = df[df.phase == phase] if phase else df
     g3 = sub[(sub.student == "graph-rkd") & (sub.N == 3)]
     rkda = sub[sub.student == "rkd_angle"]
@@ -313,10 +313,10 @@ def n3_vs_rkda(df, metric="test_mAP@R", phase="phase5"):
 
 
 # --------------------------------------------------------------------------- #
-# Export de tabelas p/ o paper (CSV + LaTeX booktabs) → tables/                #
+# Export of tables for the paper (CSV + LaTeX booktabs) → tables/                #
 # --------------------------------------------------------------------------- #
 def save_table(df, name, caption="", label=""):
-    """Salva `df` como tables/<name>.csv e tables/<name>.tex (booktabs)."""
+    """Saves `df` as tables/<name>.csv and tables/<name>.tex (booktabs)."""
     os.makedirs(TABDIR, exist_ok=True)
     df.to_csv(os.path.join(TABDIR, name + ".csv"), index=False)
     body = df.to_latex(index=False, float_format="%.4f")
@@ -332,10 +332,10 @@ def save_table(df, name, caption="", label=""):
 
 
 def export_tables(df):
-    """Gera as tabelas canônicas do paper (H1/H2/H3/H4/H5) em tables/*.{csv,tex}.
-    Pula a tabela cuja fase ainda não tem dados. Retorna a lista de arquivos."""
+    """Generates the canonical paper tables (H1/H2/H3/H4/H5) in tables/*.{csv,tex}.
+    Skips the table whose phase has no data yet. Returns the list of files."""
     written = []
-    # H1 — headline por célula (dataset, teacher): 5 alunos × mAP@R/R-Prec/R@1 (mediana)
+    # H1 — headline per cell (dataset, teacher): 5 students × mAP@R/R-Prec/R@1 (median)
     cells = df[df.phase == "phase5"][["dataset", "teacher"]].dropna().drop_duplicates()
     for d, t in cells.itertuples(index=False):
         tab = headline_table(df, d, t, "test_mAP@R")[["student", "median", "n"]]
@@ -346,7 +346,7 @@ def export_tables(df):
         written.append(save_table(tab, f"headline_{d}_{t}",
                                   f"Headline (H1) --- {d}, {t}: median test metrics.",
                                   f"tab:headline-{d}-{t}"))
-    # H2 — normalização (phase2): melhor λg por (norm, N)
+    # H2 — normalization (phase2): best λg per (norm, N)
     g2 = df[(df.phase == "phase2") & (df.student == "graph-rkd")]
     if len(g2):
         per = agg(g2, ["norm", "N", "lambda_g"], "test_mAP@R")
@@ -355,7 +355,7 @@ def export_tables(df):
                                   .rename(columns={"median": "mAP@R"}), "h2_normalization",
                                   "Normalization ablation (H2): best-$\\lambda_g$ median test mAP@R.",
                                   "tab:h2"))
-    # H3 — descritor (phase3): profile vs mds por (dataset, teacher, N)
+    # H3 — descriptor (phase3): profile vs mds per (dataset, teacher, N)
     g3 = df[(df.phase == "phase3") & (df.student == "graph-rkd")]
     if len(g3):
         t3 = agg(g3, ["dataset", "teacher", "method", "N"], "test_mAP@R")
@@ -363,7 +363,7 @@ def export_tables(df):
                                   .rename(columns={"median": "mAP@R"}), "h3_descriptor",
                                   "Descriptor characterization (H3): median test mAP@R.",
                                   "tab:h3"))
-    # H4 — objetivo (phase4): regression vs contrastive por λg
+    # H4 — objective (phase4): regression vs contrastive per λg
     g4 = df[(df.phase == "phase4") & (df.student == "graph-rkd")]
     if len(g4):
         t4 = agg(g4, ["objective", "lambda_g"], "test_mAP@R")
@@ -377,5 +377,5 @@ def export_tables(df):
         written.append(save_table(t5[["dataset", "teacher", "method", "median", "n"]]
                                   .rename(columns={"median": "mAP@R"}), "h5_n3_vs_rkda",
                                   "N=3 vs RKD-A (H5): median test mAP@R per cell.", "tab:h5"))
-    print(f"[tables] {len(written)} tabelas -> {TABDIR}: {written}")
+    print(f"[tables] {len(written)} tables -> {TABDIR}: {written}")
     return written

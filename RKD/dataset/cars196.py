@@ -12,11 +12,11 @@ __all__ = ['Cars196Metric', 'Cars196Classification']
 
 class Cars196Metric(ImageFolder):
     base_folder = 'car_ims'
-    # URL oficial do Stanford cai com frequência (redireciona p/ image-net.org ->
-    # 404). O torchvision.datasets.StanfordCars também NÃO baixa mais por isso.
-    # Default = URL do Stanford (funciona em algumas redes/cache); sobreponha por
-    # variável de ambiente p/ apontar a um mirror sem editar código. O md5 abaixo
-    # só bate se o mirror servir o .tgz/.mat canônico.
+    # The official Stanford URL goes down frequently (redirects to image-net.org ->
+    # 404). torchvision.datasets.StanfordCars also NO longer downloads for this reason.
+    # Default = Stanford URL (works on some networks/caches); override via an
+    # environment variable to point to a mirror without editing code. The md5 below
+    # only matches if the mirror serves the canonical .tgz/.mat.
     img_url = os.environ.get(
         'CARS196_IMG_URL',
         'http://imagenet.stanford.edu/internal/car196/car_ims.tgz')
@@ -57,14 +57,14 @@ class Cars196Metric(ImageFolder):
 
         anno_path = os.path.join(self.root, self.anno_filename)
         if download:
-            # Verificacao estrita de md5 so faz sentido para o download oficial.
+            # Strict md5 verification only makes sense for the official download.
             if not self._check_integrity() or \
                not check_integrity(anno_path, self.anno_md5):
                 raise RuntimeError('Dataset not found or corrupted.' +
                                    ' You can use download=True to download it')
         else:
-            # Dados locais (ex: car_ims/cars_annos.mat gerados a partir de outra
-            # fonte): confia na presenca dos arquivos em vez do md5 original.
+            # Local data (e.g. car_ims/cars_annos.mat generated from another
+            # source): trusts the presence of the files instead of the original md5.
             if not os.path.isfile(anno_path) or not os.path.isdir(
                     os.path.join(self.root, self.base_folder)):
                 raise RuntimeError('Dataset not found at %s.' % self.root +
@@ -129,10 +129,10 @@ class Cars196Classification(Dataset):
         self.target_transform = target_transform
         self.loader = default_loader
 
-        # Split OFICIAL do Cars-196 (8144/8041) materializado como ImageFolder em
-        # <root>/Cars196/official/{train,test}/<label 000..195>/. Preferido quando
-        # presente, pois o cars_annos.mat local pode estar sem a flag test oficial
-        # (todas as imagens marcadas como treino). Ver prepare_cars196_official.py.
+        # OFFICIAL Cars-196 split (8144/8041) materialized as an ImageFolder at
+        # <root>/Cars196/official/{train,test}/<label 000..195>/. Preferred when
+        # present, since the local cars_annos.mat may lack the official test flag
+        # (all images marked as train). See prepare_cars196_official.py.
         official_split = os.path.join(self.root, "official",
                                       "train" if train else "test")
         if os.path.isdir(official_split):
@@ -152,14 +152,14 @@ class Cars196Classification(Dataset):
 
         anno_path = os.path.join(self.root, self.anno_filename)
         if download:
-            # Verificacao estrita de md5 so faz sentido para o download oficial.
+            # Strict md5 verification only makes sense for the official download.
             if not self._check_integrity() or \
                not check_integrity(anno_path, self.anno_md5):
                 raise RuntimeError(
                     "Dataset not found or corrupted. Use download=True to download it")
         else:
-            # Dados locais (ex: car_ims/cars_annos.mat de outra fonte): confia na
-            # presenca dos arquivos em vez do md5 original.
+            # Local data (e.g. car_ims/cars_annos.mat from another source): trusts
+            # the presence of the files instead of the original md5.
             if not os.path.isfile(anno_path) or not os.path.isdir(
                     os.path.join(self.root, self.base_folder)):
                 raise RuntimeError(
