@@ -67,20 +67,28 @@ def resolve_ckpt(run_row):
             if os.path.exists(p):
                 return p
     # W&B: artefato de modelo logado por este run (o student; o teacher é
-    # use_artifact, não logged -> não aparece aqui). Prefere o nome 'distill'.
+    # use_artifact, não logged -> não aparece aqui). O run loga UMA versão por
+    # época (epochs 5,10,...); os aliases "best"/"last" não são confiáveis porque
+    # o NOME do artefato é compartilhado entre runs (o alias migra p/ o último run
+    # que logou). Pegamos a versão de MAIOR época: seu student_last.pth carrega o
+    # best_state GLOBAL do run (acumulado ao longo do treino).
     import wandb
     run = wandb.Api().run(f"{au.ENTITY}/{au.PROJECT}/{run_row['id']}")
-    arts = [a for a in run.logged_artifacts() if a.type == "model"]
-    arts.sort(key=lambda a: 0 if "distill" in a.name else 1)
-    for art in arts:
-        d = art.download()
-        for fn in ("best.pth", "student_last.pth"):
-            if os.path.exists(os.path.join(d, fn)):
-                return os.path.join(d, fn)
-        pths = sorted(glob.glob(os.path.join(d, "*.pth")))
-        if pths:
-            return pths[0]
-    raise FileNotFoundError(f"sem checkpoint p/ run '{name}' (local ou artefato W&B)")
+    arts = [a for a in run.logged_artifacts()
+            if a.type == "model" and "distill" in a.name]
+    if not arts:
+        arts = [a for a in run.logged_artifacts() if a.type == "model"]
+    if not arts:
+        raise FileNotFoundError(f"sem artefato de modelo p/ run '{name}'")
+    art = max(arts, key=lambda a: a.metadata.get("epoch", -1))
+    d = art.download()
+    for fn in ("student_last.pth", "best.pth"):
+        if os.path.exists(os.path.join(d, fn)):
+            return os.path.join(d, fn)
+    pths = sorted(glob.glob(os.path.join(d, "*.pth")))
+    if pths:
+        return pths[0]
+    raise FileNotFoundError(f"sem .pth no artefato {art.name} (run '{name}')")
 
 
 def load_student(ckpt):
