@@ -1,0 +1,255 @@
+% =============================================================================
+%  references.bib  —  MO434 Final Project
+%  Knowledge Distillation Study
+%  Source: 7 references listed in the project brief (Prof. Falcão, Apr. 2026)
+%
+%  Categories:
+%    (A) Pretrained image classifiers (teachers)   ........ 3 entries
+%    (B) Knowledge distillation literature ................ 4 entries
+% =============================================================================
+
+
+% =============================================================================
+%  (A)  PRETRAINED IMAGE CLASSIFIERS  —  Teachers compared in this project
+% =============================================================================
+
+@inproceedings{simonyan2015vgg,
+  author       = {Karen Simonyan and Andrew Zisserman},
+  title        = {Very Deep Convolutional Networks for Large-Scale Image
+                  Recognition},
+  booktitle    = {International Conference on Learning Representations (ICLR)},
+  year         = {2015},
+  keywords     = {VGG, image classification, convolutional networks,
+                  ImageNet, teacher model}
+}
+
+@inproceedings{he2016resnet,
+  author       = {Kaiming He and Xiangyu Zhang and Shaoqing Ren and Jian Sun},
+  title        = {Deep Residual Learning for Image Recognition},
+  booktitle    = {IEEE Conference on Computer Vision and Pattern
+                  Recognition (CVPR)},
+  pages        = {770--778},
+  year         = {2016},
+  doi          = {10.1109/CVPR.2016.90},
+  keywords     = {ResNet, residual connections, deep networks, ImageNet,
+                  teacher model}
+}
+
+@inproceedings{liu2022convnext,
+  author       = {Zhuang Liu and Hanzi Mao and Chao-Yuan Wu and
+                  Christoph Feichtenhofer and Trevor Darrell and Saining Xie},
+  title        = {A {ConvNet} for the 2020s},
+  booktitle    = {IEEE Conference on Computer Vision and Pattern
+                  Recognition (CVPR)},
+  year         = {2022},
+  keywords     = {ConvNeXt, modernized ConvNet, transformer-rivalling,
+                  ImageNet, teacher model}
+}
+
+
+% =============================================================================
+%  (B)  KNOWLEDGE DISTILLATION  —  Algorithms reviewed and compared
+% =============================================================================
+
+@article{hinton2015distilling,
+  author       = {Geoffrey Hinton and Oriol Vinyals and Jeff Dean},
+  title        = {Distilling the Knowledge in a Neural Network},
+  journal      = {arXiv preprint arXiv:1503.02531},
+  year         = {2015},
+  url          = {https://arxiv.org/abs/1503.02531},
+  keywords     = {knowledge distillation, softened cross-entropy,
+                  logit matching, temperature scaling}
+}
+
+@inproceedings{romero2015fitnets,
+  author       = {Adriana Romero and Nicolas Ballas and
+                  Samira Ebrahimi Kahou and Antoine Chassang and
+                  Carlo Gatta and Yoshua Bengio},
+  title        = {{FitNets}: Hints for Thin Deep Nets},
+  booktitle    = {International Conference on Learning Representations (ICLR)},
+  year         = {2015},
+  keywords     = {FitNets, hint layers, intermediate feature maps,
+                  feature-map distillation}
+}
+
+@inproceedings{zagoruyko2017attention,
+  author       = {Sergey Zagoruyko and Nikos Komodakis},
+  title        = {Paying More Attention to Attention: Improving the
+                  Performance of Convolutional Neural Networks via
+                  Attention Transfer},
+  booktitle    = {International Conference on Learning Representations (ICLR)},
+  year         = {2017},
+  keywords     = {attention transfer, spatial attention maps,
+                  feature-based distillation}
+}
+
+@inproceedings{park2019relational,
+  author       = {Wonpyo Park and Dongju Kim and Yan Lu and Minsu Cho},
+  title        = {Relational Knowledge Distillation},
+  booktitle    = {IEEE Conference on Computer Vision and Pattern
+                  Recognition (CVPR)},
+  year         = {2019},
+  keywords     = {relational knowledge distillation, RKD, pairwise distance,
+                  triple-wise angle, geometry preservation}
+}
+
+
+% =============================================================================
+%  (C)  CONTRASTIVE LEARNING & DISTILLATION  —  added for Graph-RKD method
+% =============================================================================
+
+@article{oord2018cpc,
+  author       = {A{\"a}ron van den Oord and Yazhe Li and Oriol Vinyals},
+  title        = {Representation Learning with Contrastive Predictive Coding},
+  journal      = {arXiv preprint arXiv:1807.03748},
+  year         = {2018},
+  keywords     = {InfoNCE, contrastive predictive coding, mutual information}
+}
+
+@inproceedings{chen2020simclr,
+  author       = {Ting Chen and Simon Kornblith and Mohammad Norouzi and Geoffrey Hinton},
+  title        = {A Simple Framework for Contrastive Learning of Visual Representations},
+  booktitle    = {International Conference on Machine Learning (ICML)},
+  year         = {2020},
+  keywords     = {SimCLR, contrastive learning, self-supervised}
+}
+
+@inproceedings{he2020moco,
+  author       = {Kaiming He and Haoqi Fan and Yuxin Wu and Saining Xie and Ross Girshick},
+  title        = {Momentum Contrast for Unsupervised Visual Representation Learning},
+  booktitle    = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year         = {2020},
+  keywords     = {MoCo, momentum contrast, contrastive learning}
+}
+
+@inproceedings{tian2020crd,
+  author       = {Yonglong Tian and Dilip Krishnan and Phillip Isola},
+  title        = {Contrastive Representation Distillation},
+  booktitle    = {International Conference on Learning Representations (ICLR)},
+  year         = {2020},
+  keywords     = {CRD, contrastive distillation, representation transfer}
+}
+
+@inproceedings{gutmann2010nce,
+  author       = {Michael Gutmann and Aapo Hyv{\"a}rinen},
+  title        = {Noise-Contrastive Estimation: A New Estimation Principle for
+                  Unnormalized Statistical Models},
+  booktitle    = {International Conference on Artificial Intelligence and
+                  Statistics (AISTATS)},
+  year         = {2010},
+  keywords     = {noise-contrastive estimation, NCE, unnormalized models}
+}
+
+@inproceedings{mikolov2013word2vec,
+  author       = {Tomas Mikolov and Ilya Sutskever and Kai Chen and
+                  Greg Corrado and Jeffrey Dean},
+  title        = {Distributed Representations of Words and Phrases and
+                  their Compositionality},
+  booktitle    = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year         = {2013},
+  keywords     = {word2vec, negative sampling, distributed representations}
+}
+
+% =============================================================================
+%  (D)  GRAPH LEARNING & PERMUTATION INVARIANCE  —  added for Graph-RKD method
+% =============================================================================
+
+@inproceedings{hamilton2017graphsage,
+  author       = {William L. Hamilton and Rex Ying and Jure Leskovec},
+  title        = {Inductive Representation Learning on Large Graphs},
+  booktitle    = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year         = {2017},
+  keywords     = {GraphSAGE, neighborhood sampling, inductive learning, graphs}
+}
+
+@inproceedings{ying2018pinsage,
+  author       = {Rex Ying and Ruining He and Kaifeng Chen and Pong Eksombatchai and
+                  William L. Hamilton and Jure Leskovec},
+  title        = {Graph Convolutional Neural Networks for Web-Scale
+                  Recommender Systems},
+  booktitle    = {ACM SIGKDD International Conference on Knowledge Discovery
+                  and Data Mining (KDD)},
+  year         = {2018},
+  keywords     = {PinSage, web-scale graphs, graph convolution, sampling}
+}
+
+@inproceedings{zaheer2017deepsets,
+  author       = {Manzil Zaheer and Satwik Kottur and Siamak Ravanbakhsh and
+                  Barnab{\'a}s P{\'o}czos and Ruslan Salakhutdinov and
+                  Alexander J. Smola},
+  title        = {Deep Sets},
+  booktitle    = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year         = {2017},
+  keywords     = {Deep Sets, permutation invariance, set functions}
+}
+
+@article{torgerson1952mds,
+  author       = {Warren S. Torgerson},
+  title        = {Multidimensional Scaling: I. Theory and Method},
+  journal      = {Psychometrika},
+  volume       = {17},
+  number       = {4},
+  pages        = {401--419},
+  year         = {1952},
+  keywords     = {classical MDS, multidimensional scaling, Gram matrix}
+}
+
+@book{cox2000mds,
+  author       = {Trevor F. Cox and Michael A. A. Cox},
+  title        = {Multidimensional Scaling},
+  edition      = {2nd},
+  publisher    = {Chapman and Hall/CRC},
+  year         = {2000},
+  keywords     = {multidimensional scaling, MDS, embedding}
+}
+
+% =============================================================================
+%  (E)  DATASETS  —  fine-grained image classification benchmarks
+% =============================================================================
+
+@inproceedings{krause2013cars,
+  author       = {Jonathan Krause and Michael Stark and Jia Deng and Li Fei-Fei},
+  title        = {3D Object Representations for Fine-Grained Categorization},
+  booktitle    = {IEEE International Conference on Computer Vision Workshops (ICCVW)},
+  year         = {2013},
+  keywords     = {Stanford Cars, Cars-196, fine-grained classification, dataset}
+}
+
+@techreport{wah2011cub,
+  author       = {Catherine Wah and Steve Branson and Peter Welinder and
+                  Pietro Perona and Serge Belongie},
+  title        = {The {Caltech-UCSD} {Birds-200-2011} Dataset},
+  institution  = {California Institute of Technology},
+  number       = {CNS-TR-2011-001},
+  year         = {2011},
+  keywords     = {CUB-200, birds, fine-grained classification, dataset}
+}
+
+
+% =============================================================================
+%  (F)  METRIC LEARNING EVALUATION
+% =============================================================================
+
+@inproceedings{musgrave2020reality,
+  author       = {Kevin Musgrave and Serge Belongie and Ser-Nam Lim},
+  title        = {A Metric Learning Reality Check},
+  booktitle    = {European Conference on Computer Vision (ECCV)},
+  year         = {2020},
+  keywords     = {metric learning, evaluation, mAP@R, recall@K, benchmark}
+}
+
+
+% =============================================================================
+%  (G)  PROBABILITY / COMBINATORICS  —  graph-space size analysis (Sec. 4)
+% =============================================================================
+
+@book{feller1968probability,
+  author       = {William Feller},
+  title        = {An Introduction to Probability Theory and Its Applications},
+  volume       = {1},
+  edition      = {3rd},
+  publisher    = {John Wiley \& Sons},
+  year         = {1968},
+  keywords     = {de Moivre--Laplace theorem, binomial coefficient,
+                  Gaussian approximation, combinatorics}
+}
