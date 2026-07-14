@@ -101,7 +101,7 @@ def fetch_runs(entity=ENTITY, project=PROJECT):
     for r in api.runs(f"{entity}/{project}"):
         # only FINISHED runs enter the analysis. 'crashed'/'failed'/'killed' runs
         # or still 'running' ones (campaign in progress) have partial/missing summary and
-        # would enter with garbage metrics -> exclude. See GUIA_ANALISE.md.
+        # would enter with garbage metrics -> exclude.
         if r.state != "finished":
             continue
         cfg = {k: v for k, v in r.config.items() if not k.startswith("_")}

@@ -7,7 +7,7 @@
 # AWS credentials) and are cached. Uses the GPU to the MAXIMUM (packs several jobs
 # per GPU by free VRAM; round-robin across GPUs).
 #
-# Prerequisites (see RUNBOOK.md):
+# Prerequisites:
 #   uv sync
 #   export WANDB_API_KEY=...      # or: uv run wandb login
 #
@@ -23,13 +23,13 @@ set -euo pipefail
 PHASES="${PHASES:-teachers phase2 phase3 phase4 phase5}"
 MAX_PARALLEL="${MAX_PARALLEL:-0}"     # 0 = auto by VRAM (100% of the GPU)
 PER_JOB_GB="${PER_JOB_GB:-4.0}"
-: "${WANDB_API_KEY:?set WANDB_API_KEY (or run 'uv run wandb login') — see RUNBOOK.md}"
+: "${WANDB_API_KEY:?set WANDB_API_KEY (or run 'uv run wandb login')}"
 
 cd "$(dirname "$0")/.."   # -> RKD/
 
 # GPU check (training images on CPU is unfeasible)
 uv run --no-sync python -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" \
-  || { echo 'ERROR: no CUDA GPU visible. Run on a machine with a GPU (see RUNBOOK.md).'; exit 1; }
+  || { echo 'ERROR: no CUDA GPU visible. Run on a machine with a GPU.'; exit 1; }
 
 echo ">> LEAN campaign | phases: [$PHASES] | parallelism: $MAX_PARALLEL (0=auto)"
 echo ">> W&B: https://wandb.ai/gabomfim-unicamp/graph-rkd  (resumable: re-run this command)"
