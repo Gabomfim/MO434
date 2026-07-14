@@ -734,7 +734,7 @@ $3 \times 3$ matrix. Table~\ref{tab:descriptor-example} makes this concrete, and
 shows why $N=2$ is excluded: under per-graph normalization the two-node descriptor is
 constant regardless of the edge.
 
-\begin{table}[h]
+\begin{table}[htbp]
     \centering
     \small
     \caption{Worked descriptor examples for small graphs, under per-graph
@@ -745,14 +745,14 @@ constant regardless of the edge.
              triangle, so the order carries genuine relational signal. Here $\bar d$
              denotes the mean of the three edges and $\hat a=a/\bar d$, etc.}
     \label{tab:descriptor-example}
-    \begin{tabular}{l l l l}
+    \begin{tabularx}{\linewidth}{@{}l l X X@{}}
         \toprule
         Order & Normalized edges & \texttt{profile} (dim $N(N{-}1)$) & \texttt{mds} spectrum (dim $N$) \\
         \midrule
         $N=2$ & $(1)$ & $(1,\,1)$ & $(0.5,\,0)$ \\
         $N=3$ & $(\hat a,\hat b,\hat c)$ & sorted per-node incident-edge pairs & two nonzero eigenvalues of $-\tfrac12 J D^{(2)} J$ \\
         \bottomrule
-    \end{tabular}
+    \end{tabularx}
 \end{table}
 
 \paragraph{Profile versus MDS.} The two descriptors trade off along several axes; at
@@ -775,7 +775,7 @@ the executed run restricts MDS to the small orders $N \in \{3,4,8\}$
 which transfers better in which regime (Section~\ref{sec:results}).
 Table~\ref{tab:descriptor-compare} summarizes the trade-offs.
 
-\begin{table}[h]
+\begin{table}[htbp]
     \centering
     \small
     \caption{Profile versus MDS descriptor, scoped to the feasible orders
@@ -785,7 +785,7 @@ Table~\ref{tab:descriptor-compare} summarizes the trade-offs.
              (traceable and less lossy) while MDS compresses to a spectrum (non-local
              and subject to cospectral collisions).}
     \label{tab:descriptor-compare}
-    \begin{tabular}{l l l}
+    \begin{tabularx}{\linewidth}{@{}l X X@{}}
         \toprule
         Property & \texttt{profile} & \texttt{mds} \\
         \midrule
@@ -796,7 +796,7 @@ Table~\ref{tab:descriptor-compare} summarizes the trade-offs.
         Numerical risk & kinks at edge-weight ties & instability at repeated eigenvalues \\
         $\lambda_g$ coupling & stronger (larger raw loss) & milder \\
         \bottomrule
-    \end{tabular}
+    \end{tabularx}
 \end{table}
 
 \paragraph{Normalization of the distance matrix.} Before computing a descriptor, the
@@ -1120,7 +1120,7 @@ and mAP@R) are reported on the test split.
 Table~\ref{tab:design-grid} summarizes the experimental design as a grid over the
 method's axes, together with the fair-comparison protocol shared by all students.
 
-\begin{table}[h]
+\begin{table}[htbp]
     \centering
     \small
     \caption{The Graph-RKD experimental design. The method is studied as a grid over
@@ -1222,12 +1222,12 @@ the effective number of graphs per step is $G = \lfloor K/N \rfloor$ or the
 description-length value of Eq.~\ref{eq:adaptive_sampling}, whichever is larger (e.g.
 $G = 42, 32, 20, 33, 35$ for $N = 3, 4, 8, 16, 17$).
 
-\begin{table}[h]
+\begin{table}[htbp]
     \centering
     \small
     \caption{Default graph-loss hyperparameters.}
     \label{tab:graph-hparams}
-    \begin{tabular}{ll}
+    \begin{tabularx}{\linewidth}{@{}l X@{}}
         \toprule
         Hyperparameter & Value \\
         \midrule
@@ -1238,7 +1238,7 @@ $G = 42, 32, 20, 33, 35$ for $N = 3, 4, 8, 16, 17$).
         loss weight $\lambda_g$ & tuned per configuration on validation (see Section~\ref{sec:student-config}) \\
         relational order $N$ & $\{3, 4, 8, 16, 17\}$ at $K{=}128$ ($N{=}2$ omitted, cf.\ Lemma~\ref{lem:n2}; $N{=}3$ added for RKD-A) \\
         \bottomrule
-    \end{tabular}
+    \end{tabularx}
 \end{table}
 
 \paragraph{Executed configuration.} The table above is the method's full design
@@ -1336,7 +1336,7 @@ cells; Figure~\ref{fig:headline} shows the grouped bars. Graph-RKD here is the c
 headline configuration (MDS descriptor, $N{=}4$, per-graph normalization,
 $\lambda_g{=}0.01$).
 
-\begin{table}[h]
+\begin{table}[htbp]
     \centering\small
     \caption{Headline (H1): median test mAP@R (\%) of the five students per cell.
              Cars-196 has $n{=}2$--$3$ seeds; CUB-200 has $n{=}2$ (the third seed was
@@ -1357,7 +1357,7 @@ $\lambda_g{=}0.01$).
     \end{tabular}
 \end{table}
 
-\begin{figure}[h]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=0.98\linewidth]{fig_h1_headline.pdf}
     \caption{Median test mAP@R per student, one facet per (dataset, teacher) cell
@@ -1413,7 +1413,7 @@ longer-schedule convergence check (80 epochs) confirmed the edge \emph{survives
 training} --- Graph-RKD beat the floor by $\sim$14--18\% test mAP@R --- so H0 is
 accepted (marginally) and the full grid uses $\lambda_g \in \{0.01, 0.1, 1\}$.
 
-\begin{figure}[h]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=0.6\linewidth]{fig_h0_lambda.pdf}
     \caption{H0 gate: validation mAP@R vs $\lambda_g$ (log axis) with the triplet-only
@@ -1429,7 +1429,7 @@ scheme, weakest in the design-space probe, was dropped from the full run
 (Section~\ref{sec:setup}). Figure~\ref{fig:h2} shows the ablation. We carry
 \emph{per-graph} forward as the headline normalization.
 
-\begin{figure}[h]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=0.6\linewidth]{fig_h2_norm.pdf}
     \caption{H2: median test mAP@R by normalization scheme (best $\lambda_g$ per scheme).
@@ -1478,7 +1478,7 @@ rate grows only mildly. Both descriptors are therefore safe at the small orders 
 MDS is the headline descriptor (marginally higher accuracy, numerically fine at
 $N{\leq}8$), and its instability is the reason large-$N$ MDS is not run.
 
-\begin{figure}[h]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=0.6\linewidth]{fig_h3_probe.pdf}
     \caption{H3 mechanism: MDS near-degeneracy rate and profile tie rate vs $N$ (offline
@@ -1497,7 +1497,7 @@ clearly wider robust band, and the comparison needs multiple seeds before any ro
 claim. Regression is retained as the headline objective (it was the more consistent of
 the two in the design-space probe).
 
-\begin{figure}[h]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=0.6\linewidth]{fig_h4_overlay.pdf}
     \caption{H4: validation mAP@R vs $\lambda_g$ for regression and contrastive.
@@ -1520,7 +1520,7 @@ the two in the design-space probe).
 At matched arity ($N{=}3$), Table~\ref{tab:h5} compares Graph-RKD's distance-based
 descriptors (profile, MDS) against RKD-A's angle, under identical headline conditions.
 
-\begin{table}[h]
+\begin{table}[htbp]
     \centering\small
     \caption{H5 --- matched-arity $N{=}3$: median test mAP@R (\%) of Graph-RKD (profile,
              MDS) vs RKD-A, per cell. Cars $n{=}2$--$3$; CUB $n{=}2$ (provisional).}
@@ -1568,7 +1568,7 @@ queries --- matching the logged Recall@1 --- so each panel mixes green (hits) an
 (misses), and the fine-grained error modes are visible directly (same make/model but
 wrong instance on Cars; visually similar species on CUB).
 
-\begin{figure}[h]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=\linewidth]{fig_qual_cars196_resnet18.pdf}
     \caption{Cars-196 / ResNet-18 top-$k$ retrieval. Each row is one query (leftmost
@@ -1578,7 +1578,7 @@ wrong instance on Cars; visually similar species on CUB).
     \label{fig:qual-cars}
 \end{figure}
 
-\begin{figure}[h]
+\begin{figure}[htbp]
     \centering
     \includegraphics[width=\linewidth]{fig_qual_cub200_resnet18.pdf}
     \caption{CUB-200 / ResNet-18 top-$k$ retrieval: Graph-RKD vs the RKD-A baseline on
