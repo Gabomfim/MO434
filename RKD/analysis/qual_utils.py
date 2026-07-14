@@ -16,6 +16,7 @@ import sys
 import matplotlib.pyplot as plt
 import torch
 import torchvision.transforms as T
+from tqdm.auto import tqdm
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RKD = os.path.dirname(_HERE)
@@ -96,7 +97,7 @@ def load_student(ckpt):
 # --------------------------------------------------------------------------- #
 def test_loader(dataset):
     """Test split do dataset (puxa do S3 e cacheia se preciso)."""
-    data_prep.ensure(DATA_DIR, [dataset])
+    data_prep.ensure(DATA_DIR, [dataset], progress=True)
     cls, _ = DATASETS[dataset]
     tf = T.Compose([T.Resize((256, 256)), T.CenterCrop(224), T.ToTensor(),
                     T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
@@ -106,10 +107,10 @@ def test_loader(dataset):
     return loaders["test"]
 
 
-def embed_test(model, loader):
+def embed_test(model, loader, desc="embedding"):
     E, Y, I = [], [], []
     with torch.no_grad():
-        for x, y in loader:
+        for x, y in tqdm(loader, desc=desc, unit="batch", leave=False):
             e, _ = embed(model, x.to(DEVICE), True)
             E.append(e.cpu()); Y.append(y); I.append(x)
     return torch.cat(E), torch.cat(Y), torch.cat(I)
@@ -169,8 +170,10 @@ def run_cell(df, dataset, teacher, baseline_student, graph_method="mds", graph_N
               f"baseline={br is not None})")
         return None
     loader = test_loader(dataset)
-    Eg, Y, I = embed_test(load_student(resolve_ckpt(gr)), loader)
-    Eb, _, _ = embed_test(load_student(resolve_ckpt(br)), loader)
+    Eg, Y, I = embed_test(load_student(resolve_ckpt(gr)), loader,
+                          desc=f"{dataset}/{teacher} embedding graph-rkd")
+    Eb, _, _ = embed_test(load_student(resolve_ckpt(br)), loader,
+                          desc=f"{dataset}/{teacher} embedding {baseline_student}")
     tg = _topk(Eg, 1).squeeze(1)
     correct = [i for i in range(len(Y)) if Y[tg[i]] == Y[i]]
     wrong = [i for i in range(len(Y)) if Y[tg[i]] != Y[i]]

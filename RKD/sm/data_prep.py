@@ -36,8 +36,16 @@ def s3_to_https(s3_prefix):
     return f"https://{bucket}.s3.amazonaws.com/{key}".rstrip("/")
 
 
-def _download_https(url, dst, attempts=25):
-    """Baixa ``url`` -> ``dst`` com RESUME (Range) e retries/backoff. Sem creds."""
+def _download_https(url, dst, attempts=25, progress=False):
+    """Baixa ``url`` -> ``dst`` com RESUME (Range) e retries/backoff. Sem creds.
+    ``progress=True`` mostra uma barra tqdm (para uso interativo/notebook); fica
+    desligada por padrão para não poluir logs de treino (SageMaker/Modal/local)."""
+    bar_cls = None
+    if progress:
+        try:
+            from tqdm.auto import tqdm as bar_cls  # notebook ou terminal
+        except ImportError:
+            bar_cls = None
     last = None
     for i in range(1, attempts + 1):
         have = os.path.getsize(dst) if os.path.exists(dst) else 0
@@ -46,13 +54,24 @@ def _download_https(url, dst, attempts=25):
             req.add_header("Range", f"bytes={have}-")
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                mode = "ab" if (have and r.status == 206) else "wb"
+                resume = bool(have) and r.status == 206
+                mode = "ab" if resume else "wb"
+                clen = r.getheader("Content-Length")
+                total = int(clen) + (have if resume else 0) if clen else None
+                bar = (bar_cls(total=total, initial=have if resume else 0,
+                               unit="B", unit_scale=True, unit_divisor=1024,
+                               desc=os.path.basename(dst), leave=False)
+                       if bar_cls else None)
                 with open(dst, mode) as f:
                     while True:
                         chunk = r.read(1 << 20)
                         if not chunk:
                             break
                         f.write(chunk)
+                        if bar is not None:
+                            bar.update(len(chunk))
+                if bar is not None:
+                    bar.close()
             return
         except (urllib.error.URLError, OSError) as e:  # noqa: PERF203
             last = e
@@ -71,7 +90,7 @@ def _s3_cp(uri, dst, profile=None):
 
 
 def ensure(data_dir, datasets, s3_prefix=DEFAULT_S3, profile=None,
-           keep_archive=False):
+           keep_archive=False, progress=False):
     """Garante Cars196/ e/ou CUB_200_2011/ EXTRAÍDOS em ``data_dir`` (cacheia:
     pula o que já está lá). Baixa por HTTPS público; se falhar e houver creds,
     tenta ``aws s3 cp``. Retorna a lista de datasets prontos."""
@@ -91,7 +110,7 @@ def ensure(data_dir, datasets, s3_prefix=DEFAULT_S3, profile=None,
         url = f"{https_base}/{arch}"
         print(f"[data] {ds}: baixando (público) {url} -> {local}", flush=True)
         try:
-            _download_https(url, local)
+            _download_https(url, local, progress=progress)
         except Exception as e:  # noqa: BLE001 - fallback com creds se privado
             print(f"[data] {ds}: HTTPS falhou ({e}); tentando aws s3 cp")
             _s3_cp(f"{s3_prefix.rstrip('/')}/{arch}", local, profile)
