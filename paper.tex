@@ -691,7 +691,7 @@ estimator; $\log_2\binom{K}{N}$ is simply a convenient bounded function that pea
 $K/2$, and $\alpha$ is a tuning knob. Algorithm~\ref{alg:sampling} summarizes the
 procedure.
 
-\begin{algorithm}[h]
+\begin{algorithm}[htbp]
 \caption{Adaptive graph sampling}
 \label{alg:sampling}
 \begin{algorithmic}[1]
@@ -834,7 +834,7 @@ as a distinct method (Section~\ref{sec:tuples-to-graphs}). Algorithm~\ref{alg:em
 details both descriptor variants; the normalization scheme is a parameter of the
 \texttt{normalize} step.
 
-\begin{algorithm}[h]
+\begin{algorithm}[htbp]
 \caption{Permutation-invariant graph embedding}
 \label{alg:embedding}
 \begin{algorithmic}[1]
@@ -924,7 +924,7 @@ $0$ to $1$ so the relational term reaches its full weight $\lambda_g$ only once 
 student's early embeddings are informative; there is no logit-based or cross-entropy
 term. The complete distillation step is given in Algorithm~\ref{alg:step}.
 
-\begin{algorithm}[h]
+\begin{algorithm}[htbp]
 \caption{Graph-RKD distillation step (metric learning)}
 \label{alg:step}
 \begin{algorithmic}[1]
@@ -1016,7 +1016,7 @@ combinatorial program large enough to constitute a separate study --- so we leav
 as future work. The per-order characterization at fixed $K = 128$ produced here is the
 groundwork such a study would build on.
 
-\begin{algorithm}[h]
+\begin{algorithm}[htbp]
 \caption{Selecting $N$ (budget-bounded log-spaced sweep)}
 \label{alg:order}
 \begin{algorithmic}[1]
