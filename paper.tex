@@ -73,7 +73,7 @@
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{graphicx}
-\graphicspath{{figures/}{RKD/analysis/figures/}}  % also find the analysis result figures
+\graphicspath{{figures/}}  % all figures live in a single figures/ folder (Overleaf)
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{tabularx}
@@ -294,7 +294,7 @@ Section~\ref{sec:conclusion} concludes.
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=0.92\textwidth]{figures/fig_pipeline.pdf}
+    \includegraphics[width=0.92\textwidth]{fig_pipeline.pdf}
     \caption{Overview of Graph-RKD. Each minibatch is embedded by the frozen teacher
              and the trained student; the \emph{same} sampled $N$-node node sets are
              turned into complete weighted graphs on both sides, summarized by a
@@ -614,7 +614,7 @@ descriptors), not enumeration cost, since both counts are astronomically large.
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=0.72\textwidth]{figures/fig_tuples_linear.pdf}
+    \includegraphics[width=0.72\textwidth]{fig_tuples_linear.pdf}
     \caption{Number of ordered $N$-tuples $P(128,N)$ in a minibatch of $K=128$, linear
              axis. The count is visually indistinguishable from zero across the range
              of practical orders and rises only in a near-vertical wall near $N=128$,
@@ -624,7 +624,7 @@ descriptors), not enumeration cost, since both counts are astronomically large.
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=0.72\textwidth]{figures/fig_graphs_linear.pdf}
+    \includegraphics[width=0.72\textwidth]{fig_graphs_linear.pdf}
     \caption{Number of unique $N$-node graphs $\binom{128}{N}$ in a minibatch of
              $K=128$, linear axis. The count is a single symmetric spike peaking at
              $N=K/2=64$ ($\approx 2.4\times10^{37}$) and returning to $1$ at $N=128$;
@@ -635,7 +635,7 @@ descriptors), not enumeration cost, since both counts are astronomically large.
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=0.78\textwidth]{figures/fig_tuples_vs_graphs_log.pdf}
+    \includegraphics[width=0.78\textwidth]{fig_tuples_vs_graphs_log.pdf}
     \caption{Ordered tuples versus unique graphs for $K=128$ on a logarithmic axis.
              Both are legible here: $P(128,N)$ (red) is monotonic and saturating,
              while $\binom{128}{N}$ (blue) is single-peaked and approximately Gaussian
